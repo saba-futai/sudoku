@@ -19,7 +19,7 @@ The core philosophy of this project is to utilize the mathematical properties of
 
 ## Android Client：
 
-**[Sudodroid](https://github.com/saba-futai/sudoku-andorid)**
+**[Sudodroid](https://github.com/saba-futai/sudoku-android)**
 
 ## Core Features
 

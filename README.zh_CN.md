@@ -15,8 +15,7 @@
 
 ## 安卓客户端：
 
-**[Sudodroid](https://github.com/saba-futai/sudoku-andorid)**
-
+**[Sudodroid](https://github.com/saba-futai/sudoku-android)**
 ## 核心特性
 
 ### 数独隐写算法
