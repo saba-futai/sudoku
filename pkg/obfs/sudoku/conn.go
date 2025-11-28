@@ -38,6 +38,7 @@ type Conn struct {
 	recordLock sync.Mutex
 
 	rawBuf      []byte
+	rawBufMu    sync.Mutex
 	pendingData []byte
 	hintBuf     []byte
 
@@ -76,10 +77,12 @@ func NewConn(c net.Conn, table *Table, pMin, pMax int, record bool) *Conn {
 
 // Close closes the connection and returns buffers to the pool
 func (sc *Conn) Close() error {
+	sc.rawBufMu.Lock()
 	if sc.rawBuf != nil {
 		bufferPool.Put(sc.rawBuf)
 		sc.rawBuf = nil
 	}
+	sc.rawBufMu.Unlock()
 	return sc.Conn.Close()
 }
 
@@ -180,7 +183,11 @@ func (sc *Conn) Read(p []byte) (n int, err error) {
 			break
 		}
 
+		sc.rawBufMu.Lock()
+
 		buf := sc.rawBuf
+
+		sc.rawBufMu.Unlock()
 		if buf == nil {
 			return 0, io.ErrClosedPipe
 		}
