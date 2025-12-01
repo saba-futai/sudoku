@@ -73,7 +73,7 @@ When the server detects illegal handshake requests, timed-out connections, or ma
 1.  **Packet Format**: Only supports TCP data packets.
 2.  **Bandwidth Utilization**: Less than 30%. It is recommended for users with high-quality lines or high bandwidth. Additionally, it is recommended for VPN service providers ("Airport owners"), as it can effectively increase user traffic usage stats.
 3.  **Client Proxy**: Only supports SOCKS5/HTTP.
-4.  **Protocol Popularity**: Currently no Android/GUI support, or compatibility with other cores. (There is an "unconventional method": whitelisting your VPS IP in rules like Clash, running this protocol locally, and then adding a SOCKS proxy in the agent core pointing to this protocol's port).
+4.  **Protocol Popularity**: Currently only official and mihomo support, no compatibility with other cores.
 
 
 

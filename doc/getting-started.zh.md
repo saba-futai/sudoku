@@ -55,6 +55,7 @@ go build -o sudoku ./cmd/sudoku-tunnel
   "padding_min": 5,
   "padding_max": 15,
   "ascii": "prefer_entropy",
+  "disable_http_mask": false,
   "proxy_mode": "pac",
   "rule_urls": []
 }

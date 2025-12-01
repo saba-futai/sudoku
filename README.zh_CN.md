@@ -5,7 +5,6 @@
 
 # Sudoku (ASCII)
 
-> [!NOTE]
 > Sudoku 协议目前已被 [Mihomo](https://github.com/MetaCubeX/mihomo) 内核支持！
 
 [![构建状态](https://img.shields.io/github/actions/workflow/status/saba-futai/sudoku/.github/workflows/release.yml?branch=main&style=for-the-badge)](https://github.com/saba-futai/sudoku/actions)
@@ -67,7 +66,7 @@
 1.  **数据包格式**: 仅支持 TCP 数据包。
 2.  **带宽利用率**: 低于30%，推荐线路好的或者带宽高的用户使用，另外推荐机场主使用，可以有效增加用户的流量。
 3.  **客户端代理**: 仅支持socks5/http。
-4.  **协议普及度**: 暂无内核兼容。（有一种邪修即Clash等在规则中放行你的VPS IP，然后本地运行这个协议，再在代理内核中添加SOCKS代理指向协议端口）
+4.  **协议普及度**: 暂仅有官方和Mihomo支持，
 
 
 
