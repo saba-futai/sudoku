@@ -93,7 +93,11 @@ func buildHandshakePayload(key string) [16]byte {
 
 func wrapClientConn(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, error) {
 	sConn := sudoku.NewConn(rawConn, cfg.Table, cfg.PaddingMin, cfg.PaddingMax, false)
-	cConn, err := crypto.NewAEADConn(sConn, cfg.Key, cfg.AEADMethod)
+	seed := cfg.Key
+	if recoveredFromKey, err := crypto.RecoverPublicKey(cfg.Key); err == nil {
+		seed = crypto.EncodePoint(recoveredFromKey)
+	}
+	cConn, err := crypto.NewAEADConn(sConn, seed, cfg.AEADMethod)
 	if err != nil {
 		rawConn.Close()
 		return nil, fmt.Errorf("setup crypto failed: %w", err)
