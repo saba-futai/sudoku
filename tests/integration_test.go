@@ -207,29 +207,6 @@ func startMiddleman(listenPort, targetPort int, protocol string, analysisChan ch
 				}
 				defer dst.Close()
 
-				// TeeReader to capture traffic
-				// We want to capture Upstream (Client -> Server) separately from Downstream if needed
-				// But for simplicity, we can just capture what goes through.
-				// The prompt asks to check Upstream and Downstream separately.
-				// So we need to know direction.
-				// This simple middleman mixes them if we just use one channel.
-				// I'll assume the caller will use separate middleman instances or just one direction at a time if strictly needed,
-				// OR I can return two channels?
-				// For now, let's just capture everything written to the "Forward" direction (Client->Server)
-				// and "Backward" direction (Server->Client) if we want.
-				// But the `startMiddleman` signature I designed has one channel.
-				// I will modify it to capture "Incoming to Listener" (Client -> Middleman)
-				// If we want to capture Server -> Client, we'd need another middleman or a more complex struct.
-				// Actually, the requirement is "Upstream ... Downstream ...".
-				// I should probably make the middleman capture both directions but label them, or just have two channels.
-				// Let's stick to the plan: "Middleman captures traffic".
-				// I will make it capture *everything* passing through into the channel?
-				// No, that mixes up/down.
-				// Let's make `startMiddleman` take `upChan` and `downChan`.
-
-				// Wait, I can't change the signature easily if I already wrote it in the plan (though I can deviate if reasonable).
-				// I'll update the signature to be more useful.
-
 				// Forward: Src -> Dst
 				go func() {
 					buf := make([]byte, 32*1024)
@@ -252,20 +229,7 @@ func startMiddleman(listenPort, targetPort int, protocol string, analysisChan ch
 				}()
 
 				// Backward: Dst -> Src
-				// If we want to capture downstream, we need to capture this too.
-				// But if I use one channel, they are mixed.
-				// I will rely on the test setup to know which middleman is which.
-				// e.g. Client -> Middleman1 -> Server -> Middleman2 -> Target
-				// Middleman1 captures Upstream (Client->Server) and Downstream (Server->Client).
-				// If I want to separate them, I should probably wrap the data or use two channels.
 
-				// Let's just copy back for now without capture in this block,
-				// and if I need to capture downstream, I'll use a specific "Downstream Middleman" or similar?
-				// Actually, "Client -> Middleman -> Server".
-				// Upstream: Client writes to Middleman. Middleman reads and writes to Server.
-				// Downstream: Server writes to Middleman. Middleman reads and writes to Client.
-
-				// I will modify `startMiddleman` to take `upChan` and `downChan`.
 				io.Copy(src, dst)
 			}(clientConn)
 		}
@@ -479,41 +443,9 @@ func TestTCPPayload_Mieru(t *testing.T) {
 	startDualMiddleman(middlemanSudokuPort, serverPort, upChan, nil)
 
 	// Middleman 2: Mieru Downlink (Server -> Client)
-	// Note: Mieru Client connects to Mieru Server.
-	// Wait, Mieru Client (in Sudoku Client) connects to Mieru Server (in Sudoku Server).
-	// So we need to intercept Client -> Server connection for Mieru?
-	// Mieru Client config takes "ServerAddress" and "Port".
-	// We can point Mieru Client to Middleman.
+
 	downChan := make(chan []byte, 100)
-	startDualMiddleman(middlemanMieruPort, mieruPort, nil, downChan) // We capture Downstream (Server->Client) here?
-	// Wait, Mieru connection is initiated by Client?
-	// Yes, `StartMieruClient` -> `mieruCli.Start()` -> `DialContext`.
-	// So Client connects to Server.
-	// Traffic flows:
-	// Uplink: Sudoku Tunnel (Client -> Server).
-	// Downlink: Mieru Tunnel (Client -> Server).
-	// Wait, Mieru is reverse? No, Mieru is usually Client connecting to Server.
-	// But in "Split" mode:
-	// Sudoku (Uplink) is Client -> Server.
-	// Mieru (Downlink) is ...?
-	// Let's check `manager.go`.
-	// `StartMieruClient`: Configures `ServerEndpoint` with `IpAddress` and `Port`.
-	// So Client connects to Server's Mieru Port.
-	// So both are Client -> Server connections.
-	// But logically, Sudoku carries Uplink data, Mieru carries Downlink data.
-	// So we capture "Upstream" on Sudoku connection, and "Downstream" on Mieru connection?
-	// Wait, Mieru connection carries data FROM Server TO Client (Downlink).
-	// But the TCP connection is established FROM Client TO Server.
-	// So on the wire:
-	// Sudoku Conn: Client sends data (Payload). Server receives.
-	// Mieru Conn: Client sends empty/control? Server sends data (Payload).
-	// So we need to capture:
-	// 1. Sudoku Conn (Client -> Server direction): Should be ASCII.
-	// 2. Mieru Conn (Server -> Client direction): Should be Encrypted.
-
-	// So Middleman 1 (Sudoku): Listen on P1, Forward to ServerPort. Capture Client->Server (UpChan).
-	// Middleman 2 (Mieru): Listen on P2, Forward to MieruPort. Capture Server->Client (DownChan).
-
+	startDualMiddleman(middlemanMieruPort, mieruPort, nil, downChan)
 	// 5. Start Sudoku Client
 	clientCfg := &config.Config{
 		Mode:          "client",
