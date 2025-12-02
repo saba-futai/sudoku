@@ -198,6 +198,14 @@ func HandshakeAndUpgrade(rawConn net.Conn, cfg *config.Config, table *sudoku.Tab
 			return nil, fmt.Errorf("pairing failed: %w", err)
 		}
 
+		// Read BIND response
+		discardBuf := make([]byte, 4)
+		if _, err := io.ReadFull(mConn, discardBuf); err != nil {
+			mConn.Close()
+			cConn.Close()
+			return nil, fmt.Errorf("read bind magic failed: %w", err)
+		}
+
 		return &hybrid.SplitConn{
 			Conn:   cConn, // Base conn
 			Reader: cConn,

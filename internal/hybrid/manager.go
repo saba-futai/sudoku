@@ -134,6 +134,8 @@ func (m *Manager) StartMieruClient() error {
 		Multiplexing: &appctlpb.MultiplexingConfig{
 			Level: toPtr(muxLevel),
 		},
+		// HandshakeMode 也需要指针
+		HandshakeMode: toPtr(appctlpb.HandshakeMode_HANDSHAKE_NO_WAIT),
 	}
 
 	m.mieruCli = mieruClient.NewClient()
@@ -168,6 +170,9 @@ func (m *Manager) DialMieruForDownlink(uuid string) (net.Conn, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	// 写入少量数据触发 SOCKS5 请求发送（对于 EarlyConn 模式）
+	conn.Write([]byte("BIND"))
 
 	return conn, nil
 }
