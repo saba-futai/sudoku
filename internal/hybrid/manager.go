@@ -32,6 +32,26 @@ func toPtr[T any](v T) *T {
 	return &v
 }
 
+func parseMultiplexingLevel(raw string) appctlpb.MultiplexingLevel {
+	v := strings.ToUpper(strings.TrimSpace(raw))
+	switch v {
+	case "", "DEFAULT", "MULTIPLEXING_DEFAULT":
+		// Let mieru pick its own default (maps to LOW factor internally).
+		return appctlpb.MultiplexingLevel_MULTIPLEXING_LOW
+	case "OFF", "MULTIPLEXING_OFF":
+		return appctlpb.MultiplexingLevel_MULTIPLEXING_OFF
+	case "LOW", "MULTIPLEXING_LOW":
+		return appctlpb.MultiplexingLevel_MULTIPLEXING_LOW
+	case "MID", "MIDDLE", "MEDIUM", "MULTIPLEXING_MIDDLE":
+		return appctlpb.MultiplexingLevel_MULTIPLEXING_MIDDLE
+	case "HIGH", "MULTIPLEXING_HIGH":
+		return appctlpb.MultiplexingLevel_MULTIPLEXING_HIGH
+	default:
+		// Be conservative on unknown values.
+		return appctlpb.MultiplexingLevel_MULTIPLEXING_LOW
+	}
+}
+
 // SplitConn 实现上下行分离的 net.Conn
 type SplitConn struct {
 	net.Conn              // 嵌入接口以满足其他方法
@@ -102,15 +122,7 @@ func (m *Manager) StartMieruClient() error {
 	}
 
 	// 2. 转换 Multiplexing Level
-	var muxLevel appctlpb.MultiplexingLevel
-	switch strings.ToUpper(mc.Multiplexing) {
-	case "LOW":
-		muxLevel = appctlpb.MultiplexingLevel_MULTIPLEXING_LOW
-	case "MIDDLE":
-		muxLevel = appctlpb.MultiplexingLevel_MULTIPLEXING_MIDDLE
-	default:
-		muxLevel = appctlpb.MultiplexingLevel_MULTIPLEXING_HIGH
-	}
+	muxLevel := parseMultiplexingLevel(mc.Multiplexing)
 
 	// 构造 Mieru Client Profile
 	profile := &appctlpb.ClientProfile{

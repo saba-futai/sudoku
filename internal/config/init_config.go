@@ -75,7 +75,9 @@ func InitMieruconfig(cfg *Config) {
 		cfg.MieruConfig.MTU = 1400
 	}
 	if cfg.MieruConfig.Multiplexing == "" {
-		cfg.MieruConfig.Multiplexing = "MULTIPLEXING_HIGH"
+		// Align with mieru docs: default to low multiplexing to reduce
+		// per-underlay memory usage on small devices.
+		cfg.MieruConfig.Multiplexing = "MULTIPLEXING_LOW"
 	}
 }
 

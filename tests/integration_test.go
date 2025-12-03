@@ -6,6 +6,8 @@ import (
 	"math/bits"
 	"net"
 	"net/http"
+	"os"
+	"runtime"
 	"sync"
 	"testing"
 	"time"
@@ -328,6 +330,119 @@ func startSudokuClient(cfg *config.Config) {
 	go app.RunClient(cfg, table)
 
 	time.Sleep(100 * time.Millisecond)
+}
+
+// TestMieruMemoryStress can be enabled manually via:
+//   SUDOKU_MIERU_STRESS=1 go test ./tests -run TestMieruMemoryStress -v
+// It simulates a long-running download over Mieru split mode and logs memory usage.
+func TestMieruMemoryStress(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skip stress test in short mode")
+	}
+	if os.Getenv("SUDOKU_MIERU_STRESS") == "" {
+		t.Skip("set SUDOKU_MIERU_STRESS=1 to run")
+	}
+
+	ports, err := getFreePorts(4)
+	if err != nil {
+		t.Fatalf("failed to get free ports: %v", err)
+	}
+	echoPort := ports[0]
+	serverPort := ports[1]
+	mieruPort := ports[2]
+	clientPort := ports[3]
+
+	if err := startEchoServer(echoPort); err != nil {
+		t.Fatalf("failed to start echo server: %v", err)
+	}
+
+	serverCfg := &config.Config{
+		Mode:        "server",
+		LocalPort:   serverPort,
+		Key:         "testkey",
+		AEAD:        "aes-128-gcm",
+		ASCII:       "prefer_entropy",
+		EnableMieru: true,
+		MieruConfig: &config.MieruConfig{
+			Port:         mieruPort,
+			Transport:    "TCP",
+			MTU:          1400,
+			Multiplexing: "MULTIPLEXING_HIGH",
+			Username:     "default",
+			Password:     "testkey",
+		},
+		FallbackAddr: "127.0.0.1:80",
+	}
+	startSudokuServer(serverCfg)
+
+	clientCfg := &config.Config{
+		Mode:          "client",
+		LocalPort:     clientPort,
+		ServerAddress: fmt.Sprintf("127.0.0.1:%d", serverPort),
+		Key:           "testkey",
+		AEAD:          "aes-128-gcm",
+		ASCII:         "prefer_entropy",
+		EnableMieru:   true,
+		MieruConfig: &config.MieruConfig{
+			Port:         mieruPort,
+			Transport:    "TCP",
+			MTU:          1400,
+			Multiplexing: "MULTIPLEXING_HIGH",
+			Username:     "default",
+			Password:     "testkey",
+		},
+		ProxyMode: "global",
+	}
+	startSudokuClient(clientCfg)
+
+	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", clientPort))
+	if err != nil {
+		t.Fatalf("Failed to connect to client: %v", err)
+	}
+	defer conn.Close()
+
+	target := fmt.Sprintf("127.0.0.1:%d", echoPort)
+	req := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target)
+	if _, err := conn.Write([]byte(req)); err != nil {
+		t.Fatalf("failed to write CONNECT: %v", err)
+	}
+
+	headerBuf := make([]byte, 1024)
+	n, err := conn.Read(headerBuf)
+	if err != nil || !contains(headerBuf[:n], "HTTP/1.1 200 Connection Established") {
+		t.Fatalf("Proxy handshake failed: %v", string(headerBuf[:n]))
+	}
+
+	const totalBytes = 128 * 1024 * 1024 // 128 MiB
+	chunk := make([]byte, 32*1024)
+	for i := range chunk {
+		chunk[i] = byte(i)
+	}
+
+	var written int64
+	lastReport := time.Now()
+	respBuf := make([]byte, len(chunk))
+
+	for written < totalBytes {
+		nw, err := conn.Write(chunk)
+		if err != nil {
+			t.Fatalf("write failed after %d bytes: %v", written, err)
+		}
+		written += int64(nw)
+
+		// Read echo to keep flow going
+		if _, err := io.ReadFull(conn, respBuf[:nw]); err != nil {
+			t.Fatalf("read failed after %d bytes: %v", written, err)
+		}
+
+		if time.Since(lastReport) > 2*time.Second {
+			var ms runtime.MemStats
+			runtime.ReadMemStats(&ms)
+			t.Logf("written=%d MiB, alloc=%d MiB, sys=%d MiB, numGC=%d",
+				written/1024/1024, ms.Alloc/1024/1024, ms.Sys/1024/1024, ms.NumGC)
+			lastReport = time.Now()
+		}
+	}
 }
 
 func TestTCPPayload_ASCII(t *testing.T) {
