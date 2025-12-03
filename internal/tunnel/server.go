@@ -55,6 +55,11 @@ type PreBufferedConn struct {
 	buf []byte
 }
 
+// NewPreBufferedConn replays the provided bytes before reading from the underlying connection.
+func NewPreBufferedConn(conn net.Conn, preRead []byte) net.Conn {
+	return &PreBufferedConn{Conn: conn, buf: preRead}
+}
+
 func (p *PreBufferedConn) Read(b []byte) (int, error) {
 	if len(p.buf) > 0 {
 		n := copy(b, p.buf)

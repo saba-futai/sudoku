@@ -3,6 +3,7 @@ package app
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/binary"
 	"encoding/hex"
@@ -194,8 +195,16 @@ func handleClientSocks5(conn net.Conn, cfg *config.Config, table *sudoku.Table, 
 	}
 
 	// CMD: header[1] (0x01 Connect)
-	if header[1] != 0x01 {
-		// 不支持 Bind 或 UDP Associate
+	switch header[1] {
+	case 0x01:
+		// CONNECT
+	case 0x03:
+		// UDP Associate
+		handleSocks5UDPAssociate(conn, cfg, dialer)
+		return
+	default:
+		// 不支持 Bind 或其他命令
+		conn.Write([]byte{0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 		return
 	}
 
@@ -217,6 +226,174 @@ func handleClientSocks5(conn net.Conn, cfg *config.Config, table *sudoku.Table, 
 
 	// 4. 转发
 	pipeConn(conn, targetConn)
+}
+
+func handleSocks5UDPAssociate(ctrl net.Conn, cfg *config.Config, dialer tunnel.Dialer) {
+	uotDialer, ok := dialer.(tunnel.UoTDialer)
+	if !ok {
+		ctrl.Write([]byte{0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+		return
+	}
+
+	udpConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	if err != nil {
+		ctrl.Write([]byte{0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+		return
+	}
+
+	uotConn, err := uotDialer.DialUDPOverTCP()
+	if err != nil {
+		udpConn.Close()
+		ctrl.Write([]byte{0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
+		return
+	}
+
+	reply := buildUDPAssociateReply(udpConn)
+	if _, err := ctrl.Write(reply); err != nil {
+		udpConn.Close()
+		uotConn.Close()
+		return
+	}
+
+	log.Printf("[SOCKS5][UDP] Associate ready on %s -> %s", udpConn.LocalAddr().String(), cfg.ServerAddress)
+	session := newUoTClientSession(ctrl, udpConn, uotConn)
+	session.run()
+}
+
+func buildUDPAssociateReply(udpConn *net.UDPConn) []byte {
+	addr := udpConn.LocalAddr().(*net.UDPAddr)
+	host := addr.IP
+	if host == nil || host.IsUnspecified() {
+		host = net.ParseIP("127.0.0.1")
+	}
+
+	buf := &bytes.Buffer{}
+	buf.Write([]byte{0x05, 0x00, 0x00})
+
+	if ip4 := host.To4(); ip4 != nil {
+		buf.WriteByte(0x01)
+		buf.Write(ip4)
+	} else {
+		buf.WriteByte(0x04)
+		buf.Write(host.To16())
+	}
+
+	portBytes := make([]byte, 2)
+	binary.BigEndian.PutUint16(portBytes, uint16(addr.Port))
+	buf.Write(portBytes)
+	return buf.Bytes()
+}
+
+type uotClientSession struct {
+	ctrlConn  net.Conn
+	udpConn   *net.UDPConn
+	uotConn   net.Conn
+	closeOnce sync.Once
+	closed    chan struct{}
+
+	clientAddrMu sync.RWMutex
+	clientAddr   *net.UDPAddr
+}
+
+func newUoTClientSession(ctrl net.Conn, udpConn *net.UDPConn, uotConn net.Conn) *uotClientSession {
+	return &uotClientSession{
+		ctrlConn: ctrl,
+		udpConn:  udpConn,
+		uotConn:  uotConn,
+		closed:   make(chan struct{}),
+	}
+}
+
+func (s *uotClientSession) run() {
+	var wg sync.WaitGroup
+	wg.Add(3)
+	go func() {
+		defer wg.Done()
+		s.consumeControl()
+	}()
+	go func() {
+		defer wg.Done()
+		s.pipeClientToServer()
+	}()
+	go func() {
+		defer wg.Done()
+		s.pipeServerToClient()
+	}()
+	wg.Wait()
+	s.close()
+}
+
+func (s *uotClientSession) close() {
+	s.closeOnce.Do(func() {
+		close(s.closed)
+		s.udpConn.Close()
+		s.uotConn.Close()
+		s.ctrlConn.Close()
+	})
+}
+
+func (s *uotClientSession) consumeControl() {
+	io.Copy(io.Discard, s.ctrlConn)
+	s.close()
+}
+
+func (s *uotClientSession) pipeClientToServer() {
+	buf := make([]byte, 65535)
+	for {
+		n, addr, err := s.udpConn.ReadFromUDP(buf)
+		if err != nil {
+			s.close()
+			return
+		}
+		destAddr, payload, err := decodeSocks5UDPRequest(buf[:n])
+		if err != nil {
+			continue
+		}
+		s.setClientAddr(addr)
+
+		if err := tunnel.WriteUoTDatagram(s.uotConn, destAddr, payload); err != nil {
+			s.close()
+			return
+		}
+	}
+}
+
+func (s *uotClientSession) pipeServerToClient() {
+	for {
+		addrStr, payload, err := tunnel.ReadUoTDatagram(s.uotConn)
+		if err != nil {
+			s.close()
+			return
+		}
+
+		clientAddr := s.getClientAddr()
+		if clientAddr == nil {
+			continue
+		}
+
+		resp := buildUDPResponsePacket(addrStr, payload)
+		if resp == nil {
+			continue
+		}
+		if _, err := s.udpConn.WriteToUDP(resp, clientAddr); err != nil {
+			s.close()
+			return
+		}
+	}
+}
+
+func (s *uotClientSession) setClientAddr(addr *net.UDPAddr) {
+	s.clientAddrMu.Lock()
+	defer s.clientAddrMu.Unlock()
+	if s.clientAddr == nil {
+		s.clientAddr = addr
+	}
+}
+
+func (s *uotClientSession) getClientAddr() *net.UDPAddr {
+	s.clientAddrMu.RLock()
+	defer s.clientAddrMu.RUnlock()
+	return s.clientAddr
 }
 
 // ==== SOCKS4 Handler ====
@@ -290,6 +467,36 @@ func readString(r io.Reader) (string, error) {
 		buf = append(buf, b[0])
 	}
 	return string(buf), nil
+}
+
+func decodeSocks5UDPRequest(pkt []byte) (string, []byte, error) {
+	if len(pkt) < 4 {
+		return "", nil, fmt.Errorf("packet too short")
+	}
+	if pkt[2] != 0x00 {
+		return "", nil, fmt.Errorf("frag not supported")
+	}
+
+	reader := bytes.NewReader(pkt[3:])
+	addrStr, _, _, err := protocol.ReadAddress(reader)
+	if err != nil {
+		return "", nil, err
+	}
+	payload := make([]byte, reader.Len())
+	if _, err := io.ReadFull(reader, payload); err != nil {
+		return "", nil, err
+	}
+	return addrStr, payload, nil
+}
+
+func buildUDPResponsePacket(addr string, payload []byte) []byte {
+	buf := &bytes.Buffer{}
+	buf.Write([]byte{0x00, 0x00, 0x00}) // RSV RSV FRAG(=0)
+	if err := protocol.WriteAddress(buf, addr); err != nil {
+		return nil
+	}
+	buf.Write(payload)
+	return buf.Bytes()
 }
 
 // ==== HTTP Handler ====

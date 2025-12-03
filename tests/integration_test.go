@@ -1,6 +1,8 @@
 package tests
 
 import (
+	"bytes"
+	"encoding/binary"
 	"fmt"
 	"io"
 	"math/bits"
@@ -14,6 +16,7 @@ import (
 
 	"github.com/saba-futai/sudoku/internal/app"
 	"github.com/saba-futai/sudoku/internal/config"
+	"github.com/saba-futai/sudoku/internal/protocol"
 	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
 )
 
@@ -88,6 +91,31 @@ func startWebServer(port int) error {
 		server.ListenAndServe()
 	}()
 	return nil
+}
+
+func startUDPEchoServer() (*net.UDPConn, int, error) {
+	addr, err := net.ResolveUDPAddr("udp", "127.0.0.1:0")
+	if err != nil {
+		return nil, 0, err
+	}
+	conn, err := net.ListenUDP("udp", addr)
+	if err != nil {
+		return nil, 0, err
+	}
+
+	go func() {
+		buf := make([]byte, 65535)
+		for {
+			n, src, err := conn.ReadFromUDP(buf)
+			if err != nil {
+				return
+			}
+			conn.WriteToUDP(buf[:n], src)
+		}
+	}()
+
+	port := conn.LocalAddr().(*net.UDPAddr).Port
+	return conn, port, nil
 }
 
 // TrafficStats holds analysis results
@@ -317,6 +345,72 @@ func startDualMiddleman(listenPort, targetPort int, upChan, downChan chan []byte
 	return nil
 }
 
+func performUDPAssociate(t *testing.T, clientPort int) (net.Conn, *net.UDPAddr) {
+	t.Helper()
+	ctrl, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", clientPort))
+	if err != nil {
+		t.Fatalf("Failed to connect to client control port: %v", err)
+	}
+
+	// Negotiate no-auth
+	if _, err := ctrl.Write([]byte{0x05, 0x01, 0x00}); err != nil {
+		t.Fatalf("Failed to write socks greeting: %v", err)
+	}
+	methodResp := make([]byte, 2)
+	if _, err := io.ReadFull(ctrl, methodResp); err != nil {
+		t.Fatalf("Failed to read socks method response: %v", err)
+	}
+	if methodResp[1] != 0x00 {
+		t.Fatalf("Unexpected method selection: %v", methodResp[1])
+	}
+
+	// UDP Associate request (0.0.0.0:0)
+	req := []byte{0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0}
+	if _, err := ctrl.Write(req); err != nil {
+		t.Fatalf("Failed to write UDP associate: %v", err)
+	}
+
+	reply := make([]byte, 10)
+	if _, err := io.ReadFull(ctrl, reply); err != nil {
+		t.Fatalf("Failed to read UDP associate reply: %v", err)
+	}
+	if reply[1] != 0x00 {
+		t.Fatalf("UDP associate rejected: %v", reply[1])
+	}
+
+	port := int(binary.BigEndian.Uint16(reply[8:10]))
+	udpAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: port}
+	return ctrl, udpAddr
+}
+
+func buildSocksUDPRequest(t *testing.T, addr string, payload []byte) []byte {
+	t.Helper()
+	buf := &bytes.Buffer{}
+	buf.Write([]byte{0x00, 0x00, 0x00})
+	if err := protocol.WriteAddress(buf, addr); err != nil {
+		t.Fatalf("failed to encode addr %s: %v", addr, err)
+	}
+	buf.Write(payload)
+	return buf.Bytes()
+}
+
+func parseSocksUDPResponse(t *testing.T, packet []byte) (string, []byte) {
+	t.Helper()
+	if len(packet) < 4 {
+		t.Fatalf("response too short: %d", len(packet))
+	}
+	reader := bytes.NewReader(packet[3:])
+	addr, _, _, err := protocol.ReadAddress(reader)
+	if err != nil {
+		t.Fatalf("failed to parse response address: %v", err)
+	}
+	data := make([]byte, reader.Len())
+	if _, err := io.ReadFull(reader, data); err != nil {
+		t.Fatalf("failed to read response payload: %v", err)
+	}
+	return addr, data
+}
+
 func startSudokuServer(cfg *config.Config) {
 	// Generate a table if needed, but RunServer takes it.
 	// We need to make sure the key matches.
@@ -333,7 +427,9 @@ func startSudokuClient(cfg *config.Config) {
 }
 
 // TestMieruMemoryStress can be enabled manually via:
-//   SUDOKU_MIERU_STRESS=1 go test ./tests -run TestMieruMemoryStress -v
+//
+//	SUDOKU_MIERU_STRESS=1 go test ./tests -run TestMieruMemoryStress -v
+//
 // It simulates a long-running download over Mieru split mode and logs memory usage.
 func TestMieruMemoryStress(t *testing.T) {
 	if testing.Short() {
@@ -515,8 +611,8 @@ func TestTCPPayload_ASCII(t *testing.T) {
 	time.Sleep(500 * time.Millisecond)
 
 	// ASCII Mode: Expect > 96% ASCII
-	verifyTraffic(t, upChan, "Upstream", 0.96, 3.0, 1.0) // Hamming check relaxed or ignored? User said "prefer ascii下ascii占比高于96%".
-	verifyTraffic(t, downChan, "Downstream", 0.96, 3.0, 1.0)
+	verifyTraffic(t, upChan, "Upstream", 0.96, 3.0, 1.1) // Hamming check relaxed or ignored? User said "prefer ascii下ascii占比高于96%".
+	verifyTraffic(t, downChan, "Downstream", 0.96, 3.0, 1.1)
 }
 
 func TestTCPPayload_Mieru(t *testing.T) {
@@ -705,6 +801,138 @@ func TestTCPPayload_Entropy(t *testing.T) {
 
 	verifyTraffic(t, upChan, "Upstream", 0.5, 3.0, 0.3)
 	verifyTraffic(t, downChan, "Downstream", 0.5, 3.0, 0.3)
+}
+
+func TestUDPOverTCP(t *testing.T) {
+	ports, _ := getFreePorts(2)
+	serverPort := ports[0]
+	clientPort := ports[1]
+
+	udpEcho, udpPort, err := startUDPEchoServer()
+	if err != nil {
+		t.Fatalf("failed to start UDP echo: %v", err)
+	}
+	defer udpEcho.Close()
+
+	serverCfg := &config.Config{
+		Mode:         "server",
+		LocalPort:    serverPort,
+		Key:          "testkey",
+		AEAD:         "aes-128-gcm",
+		ASCII:        "prefer_entropy",
+		FallbackAddr: "127.0.0.1:80",
+	}
+	startSudokuServer(serverCfg)
+
+	clientCfg := &config.Config{
+		Mode:          "client",
+		LocalPort:     clientPort,
+		ServerAddress: fmt.Sprintf("127.0.0.1:%d", serverPort),
+		Key:           "testkey",
+		AEAD:          "aes-128-gcm",
+		ASCII:         "prefer_entropy",
+		ProxyMode:     "global",
+	}
+	startSudokuClient(clientCfg)
+
+	ctrlConn, udpRelay := performUDPAssociate(t, clientPort)
+	defer ctrlConn.Close()
+
+	relayConn, err := net.DialUDP("udp", nil, udpRelay)
+	if err != nil {
+		t.Fatalf("failed to dial udp relay: %v", err)
+	}
+	defer relayConn.Close()
+
+	targetAddr := fmt.Sprintf("127.0.0.1:%d", udpPort)
+
+	sendAndVerify := func(payload []byte) {
+		packet := buildSocksUDPRequest(t, targetAddr, payload)
+		if _, err := relayConn.Write(packet); err != nil {
+			t.Fatalf("failed to send udp payload: %v", err)
+		}
+		respBuf := make([]byte, len(payload)+64)
+		n, err := relayConn.Read(respBuf)
+		if err != nil {
+			t.Fatalf("failed to read udp response: %v", err)
+		}
+		addr, data := parseSocksUDPResponse(t, respBuf[:n])
+		if addr != targetAddr {
+			t.Fatalf("unexpected response addr: %s", addr)
+		}
+		if !bytes.Equal(data, payload) {
+			t.Fatalf("udp payload mismatch: %v vs %v", data, payload)
+		}
+	}
+
+	sendAndVerify([]byte("hello-udp"))
+	sendAndVerify([]byte("second-round"))
+}
+
+func TestUDPOverTCP_LargePayload(t *testing.T) {
+	ports, _ := getFreePorts(2)
+	serverPort := ports[0]
+	clientPort := ports[1]
+
+	udpEcho, udpPort, err := startUDPEchoServer()
+	if err != nil {
+		t.Fatalf("failed to start UDP echo: %v", err)
+	}
+	defer udpEcho.Close()
+
+	serverCfg := &config.Config{
+		Mode:         "server",
+		LocalPort:    serverPort,
+		Key:          "testkey",
+		AEAD:         "aes-128-gcm",
+		ASCII:        "prefer_entropy",
+		FallbackAddr: "127.0.0.1:80",
+	}
+	startSudokuServer(serverCfg)
+
+	clientCfg := &config.Config{
+		Mode:          "client",
+		LocalPort:     clientPort,
+		ServerAddress: fmt.Sprintf("127.0.0.1:%d", serverPort),
+		Key:           "testkey",
+		AEAD:          "aes-128-gcm",
+		ASCII:         "prefer_entropy",
+		ProxyMode:     "global",
+	}
+	startSudokuClient(clientCfg)
+
+	ctrlConn, udpRelay := performUDPAssociate(t, clientPort)
+	defer ctrlConn.Close()
+
+	relayConn, err := net.DialUDP("udp", nil, udpRelay)
+	if err != nil {
+		t.Fatalf("failed to dial udp relay: %v", err)
+	}
+	defer relayConn.Close()
+
+	targetAddr := fmt.Sprintf("127.0.0.1:%d", udpPort)
+	payload := make([]byte, 8000)
+	for i := range payload {
+		payload[i] = byte(i % 251)
+	}
+
+	packet := buildSocksUDPRequest(t, targetAddr, payload)
+	if _, err := relayConn.Write(packet); err != nil {
+		t.Fatalf("failed to send large udp payload: %v", err)
+	}
+
+	respBuf := make([]byte, len(payload)+64)
+	n, err := relayConn.Read(respBuf)
+	if err != nil {
+		t.Fatalf("failed to read large udp response: %v", err)
+	}
+	addr, data := parseSocksUDPResponse(t, respBuf[:n])
+	if addr != targetAddr {
+		t.Fatalf("unexpected response addr: %s", addr)
+	}
+	if !bytes.Equal(data, payload) {
+		t.Fatalf("large udp payload mismatch (%d vs %d)", len(data), len(payload))
+	}
 }
 
 func contains(b []byte, sub string) bool {

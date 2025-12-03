@@ -70,7 +70,7 @@ Beneath the obfuscation layer, the protocol optionally employs AEAD to protect d
 When the server detects illegal handshake requests, timed-out connections, or malformed data packets, it does not disconnect immediately. Instead, it seamlessly forwards the connection to a specified decoy address (such as an Nginx or Apache server). Probers will only see a standard web server response.
 
 ### Drawbacks (TODO)
-1.  **Packet Format**: Only supports TCP data packets.
+1.  **Packet Format**: TCP native; UDP is supported via UoT (UDP-over-TCP) without exposing a raw UDP listener.
 2.  **Bandwidth Utilization**: Less than 30%. It is recommended for users with high-quality lines or high bandwidth. Additionally, it is recommended for VPN service providers ("Airport owners"), as it can effectively increase user traffic usage stats.
 3.  **Client Proxy**: Only supports SOCKS5/HTTP.
 4.  **Protocol Popularity**: Currently only official and mihomo support, no compatibility with other cores.

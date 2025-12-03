@@ -1,0 +1,48 @@
+name: pr-ci
+
+on:
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Race & Integration Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.7"
+          cache: true
+
+      - name: Run full test suite with race detector
+        run: go test ./... -race -count=1
+
+  stress:
+    name: Extreme Path (Mieru stress)
+    runs-on: ubuntu-latest
+    needs: test
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.24.7"
+          cache: true
+
+      - name: Run stress scenario
+        env:
+          SUDOKU_MIERU_STRESS: "1"
+        run: go test ./tests -run TestMieruMemoryStress -count=1

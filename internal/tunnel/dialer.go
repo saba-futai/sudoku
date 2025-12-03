@@ -92,6 +92,18 @@ func ClientHandshake(conn net.Conn, cfg *config.Config, table *sudoku.Table, pri
 	return cConn, nil
 }
 
+func (d *BaseDialer) dialUoT() (net.Conn, error) {
+	conn, err := d.dialBase()
+	if err != nil {
+		return nil, err
+	}
+	if err := WriteUoTPreface(conn); err != nil {
+		conn.Close()
+		return nil, fmt.Errorf("uot preface failed: %w", err)
+	}
+	return conn, nil
+}
+
 // StandardDialer implements Dialer for standard Sudoku mode.
 type StandardDialer struct {
 	BaseDialer
@@ -110,6 +122,11 @@ func (d *StandardDialer) Dial(destAddrStr string) (net.Conn, error) {
 	}
 
 	return cConn, nil
+}
+
+// DialUDPOverTCP establishes a UoT-capable tunnel for UDP proxying.
+func (d *StandardDialer) DialUDPOverTCP() (net.Conn, error) {
+	return d.dialUoT()
 }
 
 // HybridDialer implements Dialer for Split (Mieru) mode.
@@ -174,4 +191,9 @@ func (d *HybridDialer) Dial(destAddrStr string) (net.Conn, error) {
 	}
 
 	return hybridConn, nil
+}
+
+// DialUDPOverTCP establishes a UoT tunnel when in hybrid (Mieru) mode.
+func (d *HybridDialer) DialUDPOverTCP() (net.Conn, error) {
+	return d.dialUoT()
 }

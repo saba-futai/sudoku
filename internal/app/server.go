@@ -3,6 +3,7 @@ package app
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"net"
 	"time"
@@ -56,8 +57,25 @@ func handleServerConn(rawConn net.Conn, cfg *config.Config, table *sudoku.Table,
 	// 5. 连接目标地址
 	// ==========================================
 
+	// 判断是否为 UoT (UDP over TCP) 会话
+	firstByte := make([]byte, 1)
+	if _, err := io.ReadFull(tunnelConn, firstByte); err != nil {
+		log.Printf("[Server] Failed to read first byte: %v", err)
+		return
+	}
+
+	if firstByte[0] == tunnel.UoTMagicByte {
+		if err := tunnel.HandleUoTServer(tunnelConn); err != nil {
+			log.Printf("[Server][UoT] session ended: %v", err)
+		}
+		return
+	}
+
+	// 非 UoT：将预读的字节放回流中以兼容旧协议
+	prefixedConn := tunnel.NewPreBufferedConn(tunnelConn, firstByte)
+
 	// 从上行连接读取目标地址
-	destAddrStr, _, _, err := protocol.ReadAddress(tunnelConn)
+	destAddrStr, _, _, err := protocol.ReadAddress(prefixedConn)
 	if err != nil {
 		log.Printf("[Server] Failed to read target address: %v", err)
 		return
@@ -74,5 +92,5 @@ func handleServerConn(rawConn net.Conn, cfg *config.Config, table *sudoku.Table,
 	// ==========================================
 	// 6. 转发数据
 	// ==========================================
-	pipeConn(tunnelConn, target)
+	pipeConn(prefixedConn, target)
 }
