@@ -5,9 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
-	"log"
 	"math/rand"
-	"time"
 )
 
 var (
@@ -24,7 +22,6 @@ type Table struct {
 // NewTable initializes the obfuscation tables
 // mode: "prefer_ascii" or "prefer_entropy"
 func NewTable(key string, mode string) *Table {
-	start := time.Now()
 	t := &Table{
 		DecodeMap: make(map[uint32]byte),
 		IsASCII:   mode == "prefer_ascii",
@@ -140,7 +137,6 @@ func NewTable(key string, mode string) *Table {
 			}
 		}
 	}
-	log.Printf("[Init] Sudoku Tables initialized (%s) in %v", mode, time.Since(start))
 	return t
 }
 
