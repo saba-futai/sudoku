@@ -7,7 +7,6 @@ import (
 	"errors"
 	"log"
 	"math/rand"
-	"time"
 )
 
 var (
@@ -36,7 +35,6 @@ func NewTable(key string, mode string) *Table {
 // mode: "prefer_ascii" or "prefer_entropy". If a custom pattern is provided, ASCII mode still takes precedence.
 // The customPattern must contain 8 characters with exactly 2 x, 2 p, and 4 v (case-insensitive).
 func NewTableWithCustom(key string, mode string, customPattern string) (*Table, error) {
-	start := time.Now()
 
 	layout, err := resolveLayout(mode, customPattern)
 	if err != nil {
@@ -127,7 +125,6 @@ func NewTableWithCustom(key string, mode string, customPattern string) (*Table, 
 			}
 		}
 	}
-	log.Printf("[Init] Sudoku Tables initialized (%s) in %v", layout.name, time.Since(start))
 	return t, nil
 }
 
