@@ -21,7 +21,9 @@ package apis
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -30,6 +32,7 @@ import (
 	"github.com/saba-futai/sudoku/internal/protocol"
 	"github.com/saba-futai/sudoku/pkg/crypto"
 	"github.com/saba-futai/sudoku/pkg/obfs/httpmask"
+	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
 )
 
 // bufferedConn 这是一个内部辅助结构，用于将 bufio 多读的数据传递给后续层
@@ -41,6 +44,131 @@ type bufferedConn struct {
 
 func (bc *bufferedConn) Read(p []byte) (int, error) {
 	return bc.r.Read(p)
+}
+
+type preBufferedConn struct {
+	net.Conn
+	buf []byte
+}
+
+func (p *preBufferedConn) Read(b []byte) (int, error) {
+	if len(p.buf) > 0 {
+		n := copy(b, p.buf)
+		p.buf = p.buf[n:]
+		return n, nil
+	}
+	return p.Conn.Read(b)
+}
+
+type readOnlyConn struct {
+	*bytes.Reader
+}
+
+func (c *readOnlyConn) Write([]byte) (int, error)        { return 0, io.ErrClosedPipe }
+func (c *readOnlyConn) Close() error                     { return nil }
+func (c *readOnlyConn) LocalAddr() net.Addr              { return nil }
+func (c *readOnlyConn) RemoteAddr() net.Addr             { return nil }
+func (c *readOnlyConn) SetDeadline(time.Time) error      { return nil }
+func (c *readOnlyConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *readOnlyConn) SetWriteDeadline(time.Time) error { return nil }
+
+func drainBuffered(r *bufio.Reader) ([]byte, error) {
+	n := r.Buffered()
+	if n <= 0 {
+		return nil, nil
+	}
+	out := make([]byte, n)
+	_, err := io.ReadFull(r, out)
+	return out, err
+}
+
+func probeHandshakeBytes(probe []byte, cfg *ProtocolConfig, table *sudoku.Table) error {
+	rc := &readOnlyConn{Reader: bytes.NewReader(probe)}
+	_, obfsConn := buildServerObfsConn(rc, cfg, table, false)
+	cConn, err := crypto.NewAEADConn(obfsConn, cfg.Key, cfg.AEADMethod)
+	if err != nil {
+		return err
+	}
+
+	handshakeBuf := make([]byte, 16)
+	if _, err := io.ReadFull(cConn, handshakeBuf); err != nil {
+		return err
+	}
+	ts := int64(binary.BigEndian.Uint64(handshakeBuf[:8]))
+	now := time.Now().Unix()
+	if abs(now-ts) > 60 {
+		return fmt.Errorf("timestamp skew/replay detected: server_time=%d client_time=%d", now, ts)
+	}
+
+	modeBuf := []byte{0}
+	if _, err := io.ReadFull(cConn, modeBuf); err != nil {
+		return err
+	}
+	if modeBuf[0] != downlinkMode(cfg) {
+		return fmt.Errorf("downlink mode mismatch: client=%d server=%d", modeBuf[0], downlinkMode(cfg))
+	}
+	return nil
+}
+
+func selectTableByProbe(r *bufio.Reader, cfg *ProtocolConfig, tables []*sudoku.Table) (*sudoku.Table, []byte, error) {
+	const (
+		maxProbeBytes = 64 * 1024
+		readChunk     = 4 * 1024
+	)
+	if len(tables) == 0 {
+		return nil, nil, fmt.Errorf("no table candidates")
+	}
+	if len(tables) > 255 {
+		return nil, nil, fmt.Errorf("too many table candidates: %d", len(tables))
+	}
+
+	probe, err := drainBuffered(r)
+	if err != nil {
+		return nil, nil, fmt.Errorf("drain buffered bytes failed: %w", err)
+	}
+
+	tmp := make([]byte, readChunk)
+	for {
+		if len(tables) == 1 {
+			tail, err := drainBuffered(r)
+			if err != nil {
+				return nil, nil, fmt.Errorf("drain buffered bytes failed: %w", err)
+			}
+			probe = append(probe, tail...)
+			return tables[0], probe, nil
+		}
+
+		needMore := false
+		for _, table := range tables {
+			err := probeHandshakeBytes(probe, cfg, table)
+			if err == nil {
+				tail, err := drainBuffered(r)
+				if err != nil {
+					return nil, nil, fmt.Errorf("drain buffered bytes failed: %w", err)
+				}
+				probe = append(probe, tail...)
+				return table, probe, nil
+			}
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				needMore = true
+			}
+		}
+
+		if !needMore {
+			return nil, probe, fmt.Errorf("handshake table selection failed")
+		}
+		if len(probe) >= maxProbeBytes {
+			return nil, probe, fmt.Errorf("handshake probe exceeded %d bytes", maxProbeBytes)
+		}
+
+		n, err := r.Read(tmp)
+		if n > 0 {
+			probe = append(probe, tmp[:n]...)
+		}
+		if err != nil {
+			return nil, probe, fmt.Errorf("handshake probe read failed: %w", err)
+		}
+	}
 }
 
 // ServerHandshake 执行 Sudoku 服务端握手逻辑
@@ -109,7 +237,7 @@ func serverHandshakeCore(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, func(
 	var httpHeaderData []byte
 
 	if !cfg.DisableHTTPMask {
-		if peekBytes, err := bufReader.Peek(4); err == nil && string(peekBytes) == "POST" {
+		if peekBytes, err := bufReader.Peek(4); err == nil && httpmask.LooksLikeHTTPRequestStart(peekBytes) {
 			shouldConsumeMask = true
 		}
 	}
@@ -128,8 +256,21 @@ func serverHandshakeCore(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, func(
 		}
 	}
 
-	bConn := &bufferedConn{Conn: rawConn, r: bufReader}
-	sConn, obfsConn := buildServerObfsConn(bConn, cfg, true)
+	tables := cfg.tableCandidates()
+	selectedTable, preRead, err := selectTableByProbe(bufReader, cfg, tables)
+	if err != nil {
+		rawConn.SetReadDeadline(time.Time{})
+		return nil, nil, &HandshakeError{
+			Err:            err,
+			RawConn:        rawConn,
+			HTTPHeaderData: httpHeaderData,
+			ReadData:       preRead,
+		}
+	}
+
+	baseConn := &preBufferedConn{Conn: rawConn, buf: preRead}
+	bConn := &bufferedConn{Conn: baseConn, r: bufio.NewReader(baseConn)}
+	sConn, obfsConn := buildServerObfsConn(bConn, cfg, selectedTable, true)
 
 	fail := func(originalErr error) error {
 		rawConn.SetReadDeadline(time.Time{})

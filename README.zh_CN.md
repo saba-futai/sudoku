@@ -83,12 +83,18 @@ go build -o sudoku cmd/sudoku-tunnel/main.go
   "padding_min": 2,
   "padding_max": 7,
   "custom_table": "xpxvvpvv",
+  "custom_tables": [
+    "xpxvvpvv",
+    "vxpvxvvp"
+  ],
   "enable_pure_downlink": true,
   "disable_http_mask": false
 }
 ```
 
 如需自定义字节特征，可以在配置中加入 `custom_table`（两个 `x`、两个 `p`、四个 `v`，如 `xpxvvpvv`，共 420 种排列）；`"ascii": "prefer_ascii"` 会优先生效。
+
+如需轮换多套布局（降低长期固定特征被统计学习的风险），使用 `custom_tables`（字符串列表）。当 `custom_tables` 非空时会覆盖 `custom_table`，并在每条连接中随机选择其一；服务端会在握手阶段自动探测表，无需额外明文协商字段。
 
 ### 客户端配置
 

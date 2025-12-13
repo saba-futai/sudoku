@@ -80,11 +80,17 @@ go build -o sudoku cmd/sudoku-tunnel/main.go
   "padding_min": 2,
   "padding_max": 7,
   "custom_table": "xpxvvpvv",
+  "custom_tables": [
+    "xpxvvpvv",
+    "vxpvxvvp"
+  ],
   "enable_pure_downlink": true,
   "disable_http_mask": false
 }
 ```
 Add `"custom_table": "xpxvvpvv"` (two `x`, two `p`, four `v`, 420 permutations allowed) to enforce a custom byte layout; `"ascii": "prefer_ascii"` still overrides it.
+
+For table rotation, use `"custom_tables": ["xpxvvpvv", "vxpvxvvp"]`. When `custom_tables` is non-empty it overrides `custom_table`; the client picks one table per connection and the server probes the handshake to detect it (no extra plaintext negotiation field).
 
 ### Client Configuration
 

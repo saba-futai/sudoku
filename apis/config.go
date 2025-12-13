@@ -59,6 +59,12 @@ type ProtocolConfig struct {
 	// 不能为 nil
 	Table *sudoku.Table
 
+	// Tables is an optional candidate set for table rotation.
+	// If provided (len>0), the client will pick one table per connection and the server will
+	// probe the handshake to detect which one was used, keeping the handshake format unchanged.
+	// When Tables is set, Table may be nil.
+	Tables []*sudoku.Table
+
 	// ============ Sudoku 填充参数 ============
 
 	// PaddingMin 最小填充率 (0-100)
@@ -101,8 +107,13 @@ type ProtocolConfig struct {
 // Validate 验证配置的有效性
 // 返回第一个发现的错误，如果配置有效则返回 nil
 func (c *ProtocolConfig) Validate() error {
-	if c.Table == nil {
-		return fmt.Errorf("Table cannot be nil")
+	if c.Table == nil && len(c.Tables) == 0 {
+		return fmt.Errorf("Table cannot be nil (or provide Tables)")
+	}
+	for i, t := range c.Tables {
+		if t == nil {
+			return fmt.Errorf("Tables[%d] cannot be nil", i)
+		}
 	}
 
 	if c.Key == "" {
@@ -163,4 +174,17 @@ func DefaultConfig() *ProtocolConfig {
 		EnablePureDownlink:      true,
 		HandshakeTimeoutSeconds: 5,
 	}
+}
+
+func (c *ProtocolConfig) tableCandidates() []*sudoku.Table {
+	if c == nil {
+		return nil
+	}
+	if len(c.Tables) > 0 {
+		return c.Tables
+	}
+	if c.Table != nil {
+		return []*sudoku.Table{c.Table}
+	}
+	return nil
 }

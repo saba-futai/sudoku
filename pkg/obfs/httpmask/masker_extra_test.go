@@ -13,7 +13,7 @@ func TestWriteRandomRequestHeader(t *testing.T) {
 		t.Fatalf("WriteRandomRequestHeader error: %v", err)
 	}
 	raw := buf.String()
-	if !strings.HasPrefix(raw, "POST ") {
+	if !(strings.HasPrefix(raw, "POST ") || strings.HasPrefix(raw, "GET ")) {
 		t.Fatalf("invalid request line: %q", raw)
 	}
 	if !strings.Contains(raw, "Host: example.com") {

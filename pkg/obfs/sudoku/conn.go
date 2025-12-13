@@ -14,6 +14,33 @@ import (
 
 const IOBufferSize = 32 * 1024
 
+var perm4 = [24][4]byte{
+	{0, 1, 2, 3},
+	{0, 1, 3, 2},
+	{0, 2, 1, 3},
+	{0, 2, 3, 1},
+	{0, 3, 1, 2},
+	{0, 3, 2, 1},
+	{1, 0, 2, 3},
+	{1, 0, 3, 2},
+	{1, 2, 0, 3},
+	{1, 2, 3, 0},
+	{1, 3, 0, 2},
+	{1, 3, 2, 0},
+	{2, 0, 1, 3},
+	{2, 0, 3, 1},
+	{2, 1, 0, 3},
+	{2, 1, 3, 0},
+	{2, 3, 0, 1},
+	{2, 3, 1, 0},
+	{3, 0, 1, 2},
+	{3, 0, 2, 1},
+	{3, 1, 0, 2},
+	{3, 1, 2, 0},
+	{3, 2, 0, 1},
+	{3, 2, 1, 0},
+}
+
 type Conn struct {
 	net.Conn
 	table      *Table
@@ -108,10 +135,7 @@ func (sc *Conn) Write(p []byte) (n int, err error) {
 		puzzles := sc.table.EncodeTable[b]
 		puzzle := puzzles[sc.rng.Intn(len(puzzles))]
 
-		// Shuffle hints
-		perm := []int{0, 1, 2, 3}
-		sc.rng.Shuffle(4, func(i, j int) { perm[i], perm[j] = perm[j], perm[i] })
-
+		perm := perm4[sc.rng.Intn(len(perm4))]
 		for _, idx := range perm {
 			if sc.rng.Float32() < sc.paddingRate {
 				out = append(out, pads[sc.rng.Intn(padLen)])

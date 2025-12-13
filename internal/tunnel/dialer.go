@@ -25,8 +25,24 @@ type Dialer interface {
 // BaseDialer contains common logic for Sudoku connections.
 type BaseDialer struct {
 	Config     *config.Config
-	Table      *sudoku.Table
+	Tables     []*sudoku.Table
 	PrivateKey []byte
+}
+
+func (d *BaseDialer) pickTable() (byte, *sudoku.Table, error) {
+	if len(d.Tables) == 0 {
+		return 0, nil, fmt.Errorf("no table configured")
+	}
+	if len(d.Tables) == 1 {
+		return 0, d.Tables[0], nil
+	}
+	// Use crypto/rand to avoid shared global RNG in concurrent dialing.
+	var b [1]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return 0, nil, fmt.Errorf("random table pick failed: %w", err)
+	}
+	idx := int(b[0]) % len(d.Tables)
+	return byte(idx), d.Tables[idx], nil
 }
 
 func (d *BaseDialer) dialBase() (net.Conn, error) {
@@ -53,11 +69,16 @@ func (d *BaseDialer) dialBase() (net.Conn, error) {
 		}
 	}
 
-	return ClientHandshake(rawRemote, d.Config, d.Table, d.PrivateKey)
+	tableID, table, err := d.pickTable()
+	if err != nil {
+		rawRemote.Close()
+		return nil, err
+	}
+	return ClientHandshake(rawRemote, d.Config, table, tableID, d.PrivateKey)
 }
 
 // ClientHandshake upgrades a raw connection to a Sudoku connection
-func ClientHandshake(conn net.Conn, cfg *config.Config, table *sudoku.Table, privateKey []byte) (net.Conn, error) {
+func ClientHandshake(conn net.Conn, cfg *config.Config, table *sudoku.Table, tableID byte, privateKey []byte) (net.Conn, error) {
 	if !cfg.EnablePureDownlink && cfg.AEAD == "none" {
 		return nil, fmt.Errorf("enable_pure_downlink=false requires AEAD")
 	}
@@ -86,6 +107,7 @@ func ClientHandshake(conn net.Conn, cfg *config.Config, table *sudoku.Table, pri
 			return nil, fmt.Errorf("generate nonce failed: %w", err)
 		}
 	}
+	handshake[8] = tableID
 
 	if _, err := cConn.Write(handshake); err != nil {
 		cConn.Close()

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -108,27 +109,167 @@ func (e *SuspiciousError) Error() string {
 
 // HandshakeAndUpgrade wraps the raw connection with Sudoku/Crypto and performs handshake.
 func HandshakeAndUpgrade(rawConn net.Conn, cfg *config.Config, table *sudoku.Table) (net.Conn, error) {
+	return HandshakeAndUpgradeWithTables(rawConn, cfg, []*sudoku.Table{table})
+}
+
+type recordedConn struct {
+	net.Conn
+	recorded []byte
+}
+
+func (rc *recordedConn) GetBufferedAndRecorded() []byte {
+	return rc.recorded
+}
+
+type prefixedRecorderConn struct {
+	net.Conn
+	prefix []byte
+}
+
+func (pc *prefixedRecorderConn) GetBufferedAndRecorded() []byte {
+	var rest []byte
+	if r, ok := pc.Conn.(interface{ GetBufferedAndRecorded() []byte }); ok {
+		rest = r.GetBufferedAndRecorded()
+	}
+	out := make([]byte, 0, len(pc.prefix)+len(rest))
+	out = append(out, pc.prefix...)
+	out = append(out, rest...)
+	return out
+}
+
+type readOnlyConn struct {
+	*bytes.Reader
+}
+
+func (c *readOnlyConn) Write([]byte) (int, error)        { return 0, io.ErrClosedPipe }
+func (c *readOnlyConn) Close() error                     { return nil }
+func (c *readOnlyConn) LocalAddr() net.Addr              { return nil }
+func (c *readOnlyConn) RemoteAddr() net.Addr             { return nil }
+func (c *readOnlyConn) SetDeadline(time.Time) error      { return nil }
+func (c *readOnlyConn) SetReadDeadline(time.Time) error  { return nil }
+func (c *readOnlyConn) SetWriteDeadline(time.Time) error { return nil }
+
+func probeHandshakeBytes(probe []byte, cfg *config.Config, table *sudoku.Table) error {
+	rc := &readOnlyConn{Reader: bytes.NewReader(probe)}
+	_, obfsConn := buildObfsConnForServer(rc, table, cfg, false)
+	cConn, err := crypto.NewAEADConn(obfsConn, cfg.Key, cfg.AEAD)
+	if err != nil {
+		return err
+	}
+
+	handshakeBuf := make([]byte, 16)
+	if _, err := io.ReadFull(cConn, handshakeBuf); err != nil {
+		return err
+	}
+	ts := int64(binary.BigEndian.Uint64(handshakeBuf[:8]))
+	if abs(time.Now().Unix()-ts) > 60 {
+		return fmt.Errorf("time skew/replay")
+	}
+
+	modeBuf := make([]byte, 1)
+	if _, err := io.ReadFull(cConn, modeBuf); err != nil {
+		return err
+	}
+	if modeBuf[0] != downlinkModeByte(cfg) {
+		return fmt.Errorf("downlink mode mismatch: client=%d server=%d", modeBuf[0], downlinkModeByte(cfg))
+	}
+	return nil
+}
+
+func drainBuffered(r *bufio.Reader) ([]byte, error) {
+	n := r.Buffered()
+	if n <= 0 {
+		return nil, nil
+	}
+	out := make([]byte, n)
+	_, err := io.ReadFull(r, out)
+	return out, err
+}
+
+func selectTableByProbe(r *bufio.Reader, cfg *config.Config, tables []*sudoku.Table) (*sudoku.Table, []byte, error) {
+	const (
+		maxProbeBytes = 64 * 1024
+		readChunk     = 4 * 1024
+	)
+	if len(tables) == 0 {
+		return nil, nil, fmt.Errorf("no table candidates")
+	}
+	if len(tables) > 255 {
+		return nil, nil, fmt.Errorf("too many table candidates: %d", len(tables))
+	}
+
+	probe, err := drainBuffered(r)
+	if err != nil {
+		return nil, nil, fmt.Errorf("drain buffered bytes failed: %w", err)
+	}
+
+	tmp := make([]byte, readChunk)
+	for {
+		if len(tables) == 1 {
+			tail, err := drainBuffered(r)
+			if err != nil {
+				return nil, nil, fmt.Errorf("drain buffered bytes failed: %w", err)
+			}
+			probe = append(probe, tail...)
+			return tables[0], probe, nil
+		}
+
+		needMore := false
+		for _, table := range tables {
+			err := probeHandshakeBytes(probe, cfg, table)
+			if err == nil {
+				tail, err := drainBuffered(r)
+				if err != nil {
+					return nil, nil, fmt.Errorf("drain buffered bytes failed: %w", err)
+				}
+				probe = append(probe, tail...)
+				return table, probe, nil
+			}
+			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+				needMore = true
+			}
+		}
+
+		if !needMore {
+			return nil, probe, fmt.Errorf("handshake table selection failed")
+		}
+		if len(probe) >= maxProbeBytes {
+			return nil, probe, fmt.Errorf("handshake probe exceeded %d bytes", maxProbeBytes)
+		}
+
+		n, err := r.Read(tmp)
+		if n > 0 {
+			probe = append(probe, tmp[:n]...)
+		}
+		if err != nil {
+			return nil, probe, fmt.Errorf("handshake probe read failed: %w", err)
+		}
+	}
+}
+
+// HandshakeAndUpgradeWithTables performs the handshake by probing one of multiple tables.
+// This enables per-connection table rotation without adding a plaintext table selector.
+func HandshakeAndUpgradeWithTables(rawConn net.Conn, cfg *config.Config, tables []*sudoku.Table) (net.Conn, error) {
 	// 0. HTTP Header Check
 	bufReader := bufio.NewReader(rawConn)
 	rawConn.SetReadDeadline(time.Now().Add(HandshakeTimeout))
 
 	shouldConsumeMask := false
-	var consumed []byte
-	var err error
+	var httpHeaderData []byte
 
 	if !cfg.DisableHTTPMask {
-		peekBytes, _ := bufReader.Peek(4) // Ignore error, if peek fails, we assume no mask or let subsequent read handle it
-		if len(peekBytes) == 4 && string(peekBytes) == "POST" {
+		peekBytes, _ := bufReader.Peek(4) // Ignore error; if peek fails, let subsequent read handle it.
+		if httpmask.LooksLikeHTTPRequestStart(peekBytes) {
 			shouldConsumeMask = true
 		}
 	}
 
 	if shouldConsumeMask {
-		consumed, err = httpmask.ConsumeHeader(bufReader)
+		consumed, err := httpmask.ConsumeHeader(bufReader)
+		httpHeaderData = consumed
 		if err != nil {
 			rawConn.SetReadDeadline(time.Time{})
-			// Return rawConn wrapped in BufferedConn so caller can handle fallback
-			// Enable recording to capture all consumed data for fallback replay
+			// Return rawConn wrapped in BufferedConn so caller can handle fallback.
 			recorder := new(bytes.Buffer)
 			if len(consumed) > 0 {
 				recorder.Write(consumed)
@@ -141,15 +282,24 @@ func HandshakeAndUpgrade(rawConn net.Conn, cfg *config.Config, table *sudoku.Tab
 			return nil, &SuspiciousError{Err: fmt.Errorf("invalid http header: %w", err), Conn: badConn}
 		}
 	}
-	rawConn.SetReadDeadline(time.Time{})
-
-	bConn := &BufferedConn{Conn: rawConn, r: bufReader}
 
 	// 1. Sudoku Layer
 	if !cfg.EnablePureDownlink && cfg.AEAD == "none" {
+		rawConn.SetReadDeadline(time.Time{})
 		return nil, fmt.Errorf("enable_pure_downlink=false requires AEAD")
 	}
-	sConn, obfsConn := buildObfsConnForServer(bConn, table, cfg, true)
+
+	selectedTable, preRead, err := selectTableByProbe(bufReader, cfg, tables)
+	rawConn.SetReadDeadline(time.Time{})
+	if err != nil {
+		combined := make([]byte, 0, len(httpHeaderData)+len(preRead))
+		combined = append(combined, httpHeaderData...)
+		combined = append(combined, preRead...)
+		return nil, &SuspiciousError{Err: err, Conn: &recordedConn{Conn: rawConn, recorded: combined}}
+	}
+
+	baseConn := NewPreBufferedConn(rawConn, preRead)
+	sConn, obfsConn := buildObfsConnForServer(baseConn, selectedTable, cfg, true)
 
 	// 2. Crypto Layer
 	cConn, err := crypto.NewAEADConn(obfsConn, cfg.Key, cfg.AEAD)
@@ -161,32 +311,29 @@ func HandshakeAndUpgrade(rawConn net.Conn, cfg *config.Config, table *sudoku.Tab
 	handshakeBuf := make([]byte, 16)
 	rawConn.SetReadDeadline(time.Now().Add(HandshakeTimeout))
 	_, err = io.ReadFull(cConn, handshakeBuf)
-	rawConn.SetReadDeadline(time.Time{})
-
 	if err != nil {
-		return nil, &SuspiciousError{Err: fmt.Errorf("handshake read failed: %w", err), Conn: sConn}
+		rawConn.SetReadDeadline(time.Time{})
+		return nil, &SuspiciousError{Err: fmt.Errorf("handshake read failed: %w", err), Conn: &prefixedRecorderConn{Conn: sConn, prefix: httpHeaderData}}
 	}
 
 	ts := int64(binary.BigEndian.Uint64(handshakeBuf[:8]))
 	if abs(time.Now().Unix()-ts) > 60 {
-		return nil, &SuspiciousError{Err: fmt.Errorf("time skew/replay"), Conn: sConn}
+		rawConn.SetReadDeadline(time.Time{})
+		return nil, &SuspiciousError{Err: fmt.Errorf("time skew/replay"), Conn: &prefixedRecorderConn{Conn: sConn, prefix: httpHeaderData}}
 	}
-
-	sConn.StopRecording()
 
 	// 4. Downlink mode negotiation
 	modeBuf := make([]byte, 1)
-	rawConn.SetReadDeadline(time.Now().Add(HandshakeTimeout))
 	if _, err := io.ReadFull(cConn, modeBuf); err != nil {
-		cConn.Close()
-		return nil, fmt.Errorf("read downlink mode failed: %w", err)
+		rawConn.SetReadDeadline(time.Time{})
+		return nil, &SuspiciousError{Err: fmt.Errorf("read downlink mode failed: %w", err), Conn: &prefixedRecorderConn{Conn: sConn, prefix: httpHeaderData}}
 	}
 	rawConn.SetReadDeadline(time.Time{})
 	if modeBuf[0] != downlinkModeByte(cfg) {
-		cConn.Close()
-		return nil, &SuspiciousError{Err: fmt.Errorf("downlink mode mismatch: client=%d server=%d", modeBuf[0], downlinkModeByte(cfg)), Conn: sConn}
+		return nil, &SuspiciousError{Err: fmt.Errorf("downlink mode mismatch: client=%d server=%d", modeBuf[0], downlinkModeByte(cfg)), Conn: &prefixedRecorderConn{Conn: sConn, prefix: httpHeaderData}}
 	}
 
+	sConn.StopRecording()
 	return cConn, nil
 }
 
