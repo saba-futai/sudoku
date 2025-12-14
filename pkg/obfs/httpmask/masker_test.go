@@ -22,8 +22,15 @@ func TestConsumeHeader_ReturnsConsumedData(t *testing.T) {
 			wantErr: false,
 		},
 		{
+			name: "Valid GET request",
+			input: "GET /ws HTTP/1.1\r\n" +
+				"Host: example.com\r\n" +
+				"\r\n",
+			wantErr: false,
+		},
+		{
 			name: "Invalid method",
-			input: "GET / HTTP/1.1\r\n" +
+			input: "BREW / HTTP/1.1\r\n" +
 				"Host: example.com\r\n" +
 				"\r\n",
 			wantErr: true,

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 
 	"filippo.io/edwards25519"
 	"github.com/saba-futai/sudoku/internal/app"
@@ -91,11 +92,11 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to parse short link: %v", err)
 		}
-		table, err := sudoku.NewTableWithCustom(cfg.Key, cfg.ASCII, cfg.CustomTable)
+		tables, err := buildTables(cfg.Key, cfg.ASCII, cfg.CustomTable, cfg.CustomTables)
 		if err != nil {
 			log.Fatalf("Failed to build table: %v", err)
 		}
-		app.RunClient(cfg, table)
+		app.RunClient(cfg, tables)
 		return
 	}
 
@@ -108,11 +109,11 @@ func main() {
 		fmt.Printf("Client config saved to %s\n", result.ClientConfigPath)
 		fmt.Printf("Short link: %s\n", result.ShortLink)
 
-		table, err := sudoku.NewTableWithCustom(result.ServerConfig.Key, result.ServerConfig.ASCII, result.ServerConfig.CustomTable)
+		tables, err := buildTables(result.ServerConfig.Key, result.ServerConfig.ASCII, result.ServerConfig.CustomTable, result.ServerConfig.CustomTables)
 		if err != nil {
 			log.Fatalf("Failed to build table: %v", err)
 		}
-		app.RunServer(result.ServerConfig, table)
+		app.RunServer(result.ServerConfig, tables)
 		return
 	}
 
@@ -139,14 +140,33 @@ func main() {
 		os.Exit(0)
 	}
 
-	table, err := sudoku.NewTableWithCustom(cfg.Key, cfg.ASCII, cfg.CustomTable)
+	tables, err := buildTables(cfg.Key, cfg.ASCII, cfg.CustomTable, cfg.CustomTables)
 	if err != nil {
 		log.Fatalf("Failed to build table: %v", err)
 	}
 
 	if cfg.Mode == "client" {
-		app.RunClient(cfg, table)
+		app.RunClient(cfg, tables)
 	} else {
-		app.RunServer(cfg, table)
+		app.RunServer(cfg, tables)
 	}
+}
+
+func buildTables(key string, ascii string, customTable string, customTables []string) ([]*sudoku.Table, error) {
+	patterns := customTables
+	if len(patterns) == 0 && strings.TrimSpace(customTable) != "" {
+		patterns = []string{customTable}
+	}
+	if len(patterns) == 0 {
+		patterns = []string{""}
+	}
+	tables := make([]*sudoku.Table, 0, len(patterns))
+	for _, p := range patterns {
+		t, err := sudoku.NewTableWithCustom(key, ascii, p)
+		if err != nil {
+			return nil, err
+		}
+		tables = append(tables, t)
+	}
+	return tables, nil
 }

@@ -54,23 +54,19 @@ var globalDNSCache = &DNSCache{
 	ttl:   10 * time.Minute,
 }
 
-func normalizeClientKey(cfg *config.Config, table *sudoku.Table) ([]byte, *sudoku.Table, bool, error) {
+func normalizeClientKey(cfg *config.Config) ([]byte, bool, error) {
 	pubKeyPoint, err := crypto.RecoverPublicKey(cfg.Key)
 	if err != nil {
-		return nil, table, false, nil
+		return nil, false, nil
 	}
 
 	privateKeyBytes, err := hex.DecodeString(cfg.Key)
 	if err != nil {
-		return nil, table, false, fmt.Errorf("decode key: %w", err)
+		return nil, false, fmt.Errorf("decode key: %w", err)
 	}
 
 	cfg.Key = crypto.EncodePoint(pubKeyPoint)
-	newTable, err := sudoku.NewTableWithCustom(cfg.Key, cfg.ASCII, cfg.CustomTable)
-	if err != nil {
-		return nil, table, false, err
-	}
-	return privateKeyBytes, newTable, true, nil
+	return privateKeyBytes, true, nil
 }
 
 func (d *DNSCache) Lookup(host string) net.IP {
@@ -94,22 +90,44 @@ func (d *DNSCache) Set(host string, ip net.IP) {
 	})
 }
 
-func RunClient(cfg *config.Config, table *sudoku.Table) {
+func buildTablesFromConfig(cfg *config.Config) ([]*sudoku.Table, error) {
+	patterns := cfg.CustomTables
+	if len(patterns) == 0 && strings.TrimSpace(cfg.CustomTable) != "" {
+		patterns = []string{cfg.CustomTable}
+	}
+	if len(patterns) == 0 {
+		patterns = []string{""}
+	}
+	tableSet, err := sudoku.NewTableSet(cfg.Key, cfg.ASCII, patterns)
+	if err != nil {
+		return nil, err
+	}
+	return tableSet.Candidates(), nil
+}
+
+func RunClient(cfg *config.Config, tables []*sudoku.Table) {
 	// 1. Initialize Dialer
 	var dialer tunnel.Dialer
 
-	privateKeyBytes, updatedTable, changed, err := normalizeClientKey(cfg, table)
+	privateKeyBytes, changed, err := normalizeClientKey(cfg)
 	if err != nil {
 		log.Fatalf("Failed to process key: %v", err)
 	}
 	if changed {
-		table = updatedTable
 		log.Printf("Derived Public Key: %s", cfg.Key)
+	}
+
+	if tables == nil || len(tables) == 0 || changed {
+		var tErr error
+		tables, tErr = buildTablesFromConfig(cfg)
+		if tErr != nil {
+			log.Fatalf("Failed to build table(s): %v", tErr)
+		}
 	}
 
 	baseDialer := tunnel.BaseDialer{
 		Config:     cfg,
-		Table:      table,
+		Tables:     tables,
 		PrivateKey: privateKeyBytes,
 	}
 
@@ -131,12 +149,16 @@ func RunClient(cfg *config.Config, table *sudoku.Table) {
 	log.Printf("Client (Mixed) on :%d -> %s | Mode: %s | Rules: %d",
 		cfg.LocalPort, cfg.ServerAddress, cfg.ProxyMode, len(cfg.RuleURLs))
 
+	var primaryTable *sudoku.Table
+	if len(tables) > 0 {
+		primaryTable = tables[0]
+	}
 	for {
 		c, err := l.Accept()
 		if err != nil {
 			continue
 		}
-		go handleMixedConn(c, cfg, table, geoMgr, dialer)
+		go handleMixedConn(c, cfg, primaryTable, geoMgr, dialer)
 	}
 }
 

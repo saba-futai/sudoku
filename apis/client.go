@@ -21,6 +21,7 @@ package apis
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
@@ -31,6 +32,7 @@ import (
 	"github.com/saba-futai/sudoku/pkg/crypto"
 	"github.com/saba-futai/sudoku/pkg/dnsutil"
 	"github.com/saba-futai/sudoku/pkg/obfs/httpmask"
+	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
 )
 
 // Dial 建立一条到 Sudoku 服务器的隧道，并请求连接到 cfg.TargetAddress
@@ -90,8 +92,24 @@ func buildHandshakePayload(key string) [16]byte {
 	return payload
 }
 
-func wrapClientConn(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, error) {
-	obfsConn := buildClientObfsConn(rawConn, cfg)
+func pickClientTable(cfg *ProtocolConfig) (*sudoku.Table, byte, error) {
+	candidates := cfg.tableCandidates()
+	if len(candidates) == 0 {
+		return nil, 0, fmt.Errorf("no table configured")
+	}
+	if len(candidates) == 1 {
+		return candidates[0], 0, nil
+	}
+	var b [1]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		return nil, 0, fmt.Errorf("random table pick failed: %w", err)
+	}
+	idx := int(b[0]) % len(candidates)
+	return candidates[idx], byte(idx), nil
+}
+
+func wrapClientConn(rawConn net.Conn, cfg *ProtocolConfig, table *sudoku.Table) (net.Conn, error) {
+	obfsConn := buildClientObfsConn(rawConn, cfg, table)
 	seed := cfg.Key
 	if recoveredFromKey, err := crypto.RecoverPublicKey(cfg.Key); err == nil {
 		seed = crypto.EncodePoint(recoveredFromKey)
@@ -150,12 +168,20 @@ func establishBaseConn(ctx context.Context, cfg *ProtocolConfig, validate func(*
 		}
 	}
 
-	cConn, err := wrapClientConn(rawConn, cfg)
+	table, tableID, err := pickClientTable(cfg)
+	if err != nil {
+		return nil, err
+	}
+
+	cConn, err := wrapClientConn(rawConn, cfg, table)
 	if err != nil {
 		return nil, err
 	}
 
 	handshake := buildHandshakePayload(cfg.Key)
+	if len(cfg.tableCandidates()) > 1 {
+		handshake[15] = tableID
+	}
 	if _, err := cConn.Write(handshake[:]); err != nil {
 		cConn.Close()
 		return nil, fmt.Errorf("send handshake failed: %w", err)

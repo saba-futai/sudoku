@@ -50,12 +50,12 @@ func downlinkMode(cfg *ProtocolConfig) byte {
 	return downlinkModePacked
 }
 
-func buildClientObfsConn(raw net.Conn, cfg *ProtocolConfig) net.Conn {
-	base := sudoku.NewConn(raw, cfg.Table, cfg.PaddingMin, cfg.PaddingMax, false)
+func buildClientObfsConn(raw net.Conn, cfg *ProtocolConfig, table *sudoku.Table) net.Conn {
+	base := sudoku.NewConn(raw, table, cfg.PaddingMin, cfg.PaddingMax, false)
 	if cfg.EnablePureDownlink {
 		return base
 	}
-	packed := sudoku.NewPackedConn(raw, cfg.Table, cfg.PaddingMin, cfg.PaddingMax)
+	packed := sudoku.NewPackedConn(raw, table, cfg.PaddingMin, cfg.PaddingMax)
 	return &directionalConn{
 		Conn:   raw,
 		reader: packed,
@@ -63,12 +63,12 @@ func buildClientObfsConn(raw net.Conn, cfg *ProtocolConfig) net.Conn {
 	}
 }
 
-func buildServerObfsConn(raw net.Conn, cfg *ProtocolConfig, record bool) (*sudoku.Conn, net.Conn) {
-	uplink := sudoku.NewConn(raw, cfg.Table, cfg.PaddingMin, cfg.PaddingMax, record)
+func buildServerObfsConn(raw net.Conn, cfg *ProtocolConfig, table *sudoku.Table, record bool) (*sudoku.Conn, net.Conn) {
+	uplink := sudoku.NewConn(raw, table, cfg.PaddingMin, cfg.PaddingMax, record)
 	if cfg.EnablePureDownlink {
 		return uplink, uplink
 	}
-	packed := sudoku.NewPackedConn(raw, cfg.Table, cfg.PaddingMin, cfg.PaddingMax)
+	packed := sudoku.NewPackedConn(raw, table, cfg.PaddingMin, cfg.PaddingMax)
 	return uplink, &directionalConn{
 		Conn:    raw,
 		reader:  uplink,

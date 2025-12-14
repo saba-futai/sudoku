@@ -402,7 +402,7 @@ func startSudokuServer(cfg *config.Config) {
 	if err != nil {
 		panic(err)
 	}
-	go app.RunServer(cfg, table)
+	go app.RunServer(cfg, []*sudoku.Table{table})
 	time.Sleep(200 * time.Millisecond)
 	waitForPort(cfg.LocalPort)
 }
@@ -412,7 +412,7 @@ func startSudokuClient(cfg *config.Config) {
 	if err != nil {
 		panic(err)
 	}
-	go app.RunClient(cfg, table)
+	go app.RunClient(cfg, []*sudoku.Table{table})
 	time.Sleep(200 * time.Millisecond)
 	waitForPort(cfg.LocalPort)
 }

@@ -74,6 +74,7 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	// For rotation, build multiple tables and set cfg.Tables instead of cfg.Table.
 
 	cfg := &apis.ProtocolConfig{
 		Key:                     "shared-key-hex-or-plain",

@@ -15,7 +15,7 @@ import (
 	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
 )
 
-func RunServer(cfg *config.Config, table *sudoku.Table) {
+func RunServer(cfg *config.Config, tables []*sudoku.Table) {
 	// 1. 监听 TCP 端口
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.LocalPort))
 	if err != nil {
@@ -28,13 +28,13 @@ func RunServer(cfg *config.Config, table *sudoku.Table) {
 		if err != nil {
 			continue
 		}
-		go handleServerConn(c, cfg, table)
+		go handleServerConn(c, cfg, tables)
 	}
 }
 
-func handleServerConn(rawConn net.Conn, cfg *config.Config, table *sudoku.Table) {
+func handleServerConn(rawConn net.Conn, cfg *config.Config, tables []*sudoku.Table) {
 	// Use Tunnel Abstraction for Handshake and Upgrade
-	tunnelConn, err := tunnel.HandshakeAndUpgrade(rawConn, cfg, table)
+	tunnelConn, err := tunnel.HandshakeAndUpgradeWithTables(rawConn, cfg, tables)
 	if err != nil {
 		if suspErr, ok := err.(*tunnel.SuspiciousError); ok {
 			log.Printf("[Security] Suspicious connection: %v", suspErr.Err)

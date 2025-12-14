@@ -9,6 +9,10 @@
   "padding_min": 5,
   "padding_max": 15,
   "custom_table": "xpxvvpvv",
+  "custom_tables": [
+    "xpxvvpvv",
+    "vxpvxvvp"
+  ],
   "ascii": "prefer_entropy",
   "enable_pure_downlink": true,
   "disable_http_mask": false,

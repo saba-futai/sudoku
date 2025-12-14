@@ -74,7 +74,7 @@ func TestSudokuTunnel_Standard(t *testing.T) {
 	dialer := &StandardDialer{
 		BaseDialer: BaseDialer{
 			Config: cfg,
-			Table:  table,
+			Tables: []*sudoku.Table{table},
 		},
 	}
 
