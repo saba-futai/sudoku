@@ -96,6 +96,8 @@ go build -o sudoku cmd/sudoku-tunnel/main.go
 
 如需轮换多套布局（降低长期固定特征被统计学习的风险），使用 `custom_tables`（字符串列表）。当 `custom_tables` 非空时会覆盖 `custom_table`，并在每条连接中随机选择其一；服务端会在握手阶段自动探测表，无需额外明文协商字段。
 
+注意：`sudoku://` 短链接目前只支持单个 `custom_table`（字段 `t`），不支持 `custom_tables` 多表轮换；如需轮换请分享完整配置文件。
+
 ### 客户端配置
 
 将 `mode` 改为 `client`，并设置 `server_address` 为服务端 IP，将`local_port` 设置为代理监听端口，添加 `rule_urls` 使用`configs/config.json`的模板填充；如需带宽优化下行，将 `enable_pure_downlink` 置为 `false`。

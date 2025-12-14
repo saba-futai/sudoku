@@ -92,6 +92,8 @@ Add `"custom_table": "xpxvvpvv"` (two `x`, two `p`, four `v`, 420 permutations a
 
 For table rotation, use `"custom_tables": ["xpxvvpvv", "vxpvxvvp"]`. When `custom_tables` is non-empty it overrides `custom_table`; the client picks one table per connection and the server probes the handshake to detect it (no extra plaintext negotiation field).
 
+Note: `sudoku://` short links only support a single `custom_table` (field `t`) and do not encode `custom_tables`.
+
 ### Client Configuration
 
 Change `mode` to `client`, set `server_address` to the Server IP, set `local_port` to the proxy listening port, add `rule_urls` using the template in `configs/config.json`. Toggle `enable_pure_downlink` to `false` if you want the packed downlink mode.
