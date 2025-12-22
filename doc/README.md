@@ -17,7 +17,9 @@ Docs map:
 - Run with config: `./sudoku -c config.json`
 - Test config only: `./sudoku -c config.json -test`
 - Start client from link: `./sudoku -link "sudoku://..."` (PAC mode)
-- Export short link from config: `./sudoku -c config.json -export-link [-public-host your.ip]`
+- Export short link from config:
+  - client config: `./sudoku -c client.json -export-link`
+  - server config: `./sudoku -c server.json -export-link -public-host host[:port]` (or set `server_address` in config)
 - Interactive setup (creates server/client configs + link, then starts server): `./sudoku -tui [-public-host your.ip]`
 
 ## Key (most important)
@@ -83,6 +85,16 @@ Routing modes (client):
 - `rule_urls: ["direct"]`: proxy nothing (debug only)
 - `rule_urls: [...]` (URLs): PAC mode, direct for CN/local rules and proxy the rest
 
+## Cloudflare CDN (Orange Cloud)
+Sudoku can run through a CDN/proxy only in real HTTP tunnel modes: `xhttp` / `pht` / `auto`. `legacy` mode is not CDN-compatible.
+
+- Server: set `"disable_http_mask": false` and `"http_mask_mode": "pht"` (or `"auto"`).
+- Client: same, and set `"server_address": "your.domain.com:443"` (or other Cloudflare-supported HTTP(S) ports like `8080`/`8443`).
+- HTTPS to the CDN edge is inferred by port (`443` => HTTPS). To force HTTPS explicitly, set `"http_mask_tls": true`.
+
+Notes:
+- Cloudflare SSL mode `Flexible` is the simplest (Cloudflare → origin uses HTTP). For end-to-end TLS to your origin, use `Full (strict)` + a TLS terminator/reverse-proxy in front of Sudoku.
+
 ## Deployment & Persistence
 - Build: `go build -o sudoku ./cmd/sudoku-tunnel`
 - Systemd (example):
@@ -116,11 +128,15 @@ WantedBy=multi-user.target
   - `e` AEAD: `chacha20-poly1305` (default) / `aes-128-gcm` / `none`
   - `m` client mixed proxy port (default 1080 if missing)
   - `x` packed downlink (true enables bandwidth-optimized downlink)
-  - `t` custom table pattern (optional, same as `custom_table` in config)
-  - Note: short links do not support `custom_tables` (multiple table rotation); only a single `t`/`custom_table` can be carried.
+  - `t` custom table pattern (optional, same as `custom_table` in config; kept for backward compatibility)
+  - `ts` custom table patterns rotation (optional, same as `custom_tables` in config)
+  - `hd` disable HTTP mask (optional)
+  - `hm` HTTP mask mode: `legacy` / `xhttp` / `pht` / `auto` (optional)
+  - `ht` force HTTPS in tunnel modes (optional)
+  - `hh` HTTP Host/SNI override in tunnel modes (optional)
 - Example: `sudoku://eyJoIjoiZXhhbXBsZS5jb20iLCJwIjo4MDgwLCJrIjoiYWJjZCIsImEiOiJhc2NpaSIsIm0iOjEwODAsIm1wIjoyMDEyM30`
 - Client bootstrap: `./sudoku -link "<link>"` (starts PAC proxy).
-- Export from config: `./sudoku -c client.json -export-link [-public-host host]`
+- Export from config: `./sudoku -c client.json -export-link` (or `./sudoku -c server.json -export-link -public-host host[:port]`)
 
 ---
 
@@ -136,7 +152,9 @@ WantedBy=multi-user.target
 - 配置运行：`./sudoku -c config.json`
 - 仅校验配置：`./sudoku -c config.json -test`
 - 短链启动客户端：`./sudoku -link "sudoku://..."`（PAC 模式）
-- 从配置导出短链：`./sudoku -c config.json -export-link [-public-host 服务器IP]`
+- 从配置导出短链：
+  - 客户端配置：`./sudoku -c client.json -export-link`
+  - 服务端配置：`./sudoku -c server.json -export-link -public-host 域名[:端口]`（或在配置里写 `server_address`）
 - 交互式配置并启动服务端：`./sudoku -tui [-public-host 服务器IP]`
 
 ## key（最关键）
@@ -203,6 +221,16 @@ WantedBy=multi-user.target
 - `rule_urls: ["direct"]`：全直连（仅用于调试）
 - `rule_urls: [...]`（URL 列表）：PAC 模式，命中 CN/local 规则走直连，其他走代理
 
+## 过 Cloudflare CDN（小黄云）
+Sudoku 只有在真实 HTTP 隧道模式下才能过 CDN/代理：`xhttp` / `pht` / `auto`；`legacy` 模式不兼容 CDN。
+
+- 服务端：`"disable_http_mask": false`，并将 `"http_mask_mode"` 设为 `"pht"`（或 `"auto"`）。
+- 客户端：同样开启 HTTP mask，并将 `"server_address"` 填成 Cloudflare 域名（如 `"your.domain.com:443"`；也可用 Cloudflare 支持的 `8080`/`8443` 等端口）。
+- 端口 `443` 会自动使用 HTTPS；如需强制 HTTPS，可设 `"http_mask_tls": true`。
+
+提示：
+- Cloudflare 的 SSL 模式选 `Flexible` 最省事（Cloudflare → 源站走 HTTP）。如需源站也走 TLS，请用 `Full (strict)` 并在 Sudoku 前面加一层 TLS 终止/反代。
+
 ## 部署与守护
 - 构建：`go build -o sudoku ./cmd/sudoku-tunnel`
 - Systemd 示例见上（修改路径/端口）；客户端可用用户级服务。
@@ -221,6 +249,10 @@ WantedBy=multi-user.target
   - `e` AEAD：`chacha20-poly1305`（默认）/`aes-128-gcm`/`none`
   - `m` 客户端混合代理端口（缺省 1080）
   - `x` 带宽优化下行标记（true=启用）
-  - `t` 自定义表型（可选，与 `custom_table` 一致）
-  - 注意：短链接不支持 `custom_tables`（多表轮换）；只能携带单个 `t`/`custom_table`。
+  - `t` 自定义表型（可选，与 `custom_table` 一致；为兼容旧版保留）
+  - `ts` 多表轮换（可选，与 `custom_tables` 一致）
+  - `hd` 禁用 HTTP mask（可选）
+  - `hm` HTTP mask 模式：`legacy` / `xhttp` / `pht` / `auto`（可选）
+  - `ht` 强制 HTTPS（可选）
+  - `hh` tunnel 模式下的 Host/SNI 覆盖（可选）
 - 启动：`./sudoku -link "<短链>"`；导出：`./sudoku -c client.json -export-link [-public-host]`

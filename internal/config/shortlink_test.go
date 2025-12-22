@@ -175,6 +175,35 @@ func TestShortLinkAdvertiseHostWithPort(t *testing.T) {
 	}
 }
 
+func TestShortLinkServerDeriveHostFromFallback(t *testing.T) {
+	cfg := &Config{
+		Mode:               "server",
+		LocalPort:          10059,
+		Key:                "deadbeef",
+		EnablePureDownlink: true,
+		FallbackAddr:       "8.219.204.112:11415",
+		DisableHTTPMask:    false,
+		HTTPMaskMode:       "pht",
+	}
+
+	link, err := BuildShortLinkFromConfig(cfg, "")
+	if err != nil {
+		t.Fatalf("BuildShortLinkFromConfig error: %v", err)
+	}
+
+	decoded, err := BuildConfigFromShortLink(link)
+	if err != nil {
+		t.Fatalf("BuildConfigFromShortLink error: %v", err)
+	}
+
+	if decoded.ServerAddress != "8.219.204.112:10059" {
+		t.Fatalf("server address mismatch, got %s", decoded.ServerAddress)
+	}
+	if decoded.HTTPMaskMode != "pht" {
+		t.Fatalf("http mask mode mismatch, got %s", decoded.HTTPMaskMode)
+	}
+}
+
 func TestShortLinkInvalidScheme(t *testing.T) {
 	if _, err := BuildConfigFromShortLink("http://bad"); err == nil {
 		t.Fatalf("expected error for bad scheme")

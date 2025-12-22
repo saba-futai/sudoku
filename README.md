@@ -32,6 +32,7 @@ Unlike traditional random noise obfuscation, this protocol uses various masking 
 *   **Dynamic Padding**: Inserts non-data bytes of arbitrary length at arbitrary positions at any time, hiding protocol characteristics.
 *   **Data Hiding**: The distribution characteristics of padding bytes match those of plaintext bytes (65%~100%* ASCII ratio), preventing identification of plaintext through data distribution analysis.
 *   **Low Information Entropy**: The overall byte Hamming weight is approximately 3.0* (in low entropy mode), which is lower than the 3.4~4.6 range mentioned in the GFW Report that typically triggers blocking.
+*   **User-defined Fingerprints**: You can freely choose your preferred byte style via ASCII/entropy preference and `custom_table`/`custom_tables` layouts. We don’t recommend a single “best” layout — diversity across users helps censorship resistance.
 
 ---
 
@@ -39,7 +40,7 @@ Unlike traditional random noise obfuscation, this protocol uses various masking 
 
 ### Downlink Modes
 * **Pure Sudoku Downlink**: Default. Uses classic Sudoku puzzles in both directions.
-* **Bandwidth-Optimized Downlink**: Set `"enable_pure_downlink": false` to pack AEAD ciphertext into 6-bit groups (01xxxxxx / 0xx0xxxx) with padding reuse. This reduces downlink overhead while keeping uplink untouched. AEAD must be enabled for this mode. Padding pools and ASCII/entropy preferences still influence the emitted byte distribution.
+* **Bandwidth-Optimized Downlink**: Set `"enable_pure_downlink": false` to pack AEAD ciphertext into 6-bit groups (01xxxxxx / 0xx0xxxx) with padding reuse. This reduces downlink overhead while keeping uplink untouched. AEAD must be enabled for this mode. Padding pools and ASCII/entropy preferences still influence the emitted byte distribution (downlink is not “random noise”). In practice, downlink efficiency is typically around **80%**.
 
 ### Security & Encryption
 Beneath the obfuscation layer, the protocol optionally employs AEAD to protect data integrity and confidentiality.
