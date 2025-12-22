@@ -16,6 +16,7 @@ func Load(path string) (*Config, error) {
 
 	cfg := Config{
 		EnablePureDownlink: true,
+		HTTPMaskMode:       "legacy",
 	}
 	if err := json.NewDecoder(f).Decode(&cfg); err != nil {
 		return nil, err
@@ -27,6 +28,9 @@ func Load(path string) (*Config, error) {
 
 	if cfg.ASCII == "" {
 		cfg.ASCII = "prefer_entropy"
+	}
+	if cfg.HTTPMaskMode == "" {
+		cfg.HTTPMaskMode = "legacy"
 	}
 
 	if !cfg.EnablePureDownlink && cfg.AEAD == "none" {

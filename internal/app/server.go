@@ -6,12 +6,14 @@ import (
 	"io"
 	"log"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/saba-futai/sudoku/internal/config"
 	"github.com/saba-futai/sudoku/internal/handler"
 	"github.com/saba-futai/sudoku/internal/protocol"
 	"github.com/saba-futai/sudoku/internal/tunnel"
+	"github.com/saba-futai/sudoku/pkg/obfs/httpmask"
 	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
 )
 
@@ -23,22 +25,65 @@ func RunServer(cfg *config.Config, tables []*sudoku.Table) {
 	}
 	log.Printf("Server on :%d (Fallback: %s)", cfg.LocalPort, cfg.FallbackAddr)
 
+	var tunnelSrv *httpmask.TunnelServer
+	if !cfg.DisableHTTPMask {
+		switch strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMode)) {
+		case "xhttp", "pht", "auto":
+			tunnelSrv = httpmask.NewTunnelServer(httpmask.TunnelServerOptions{
+				Mode: cfg.HTTPMaskMode,
+			})
+		}
+	}
+
 	for {
 		c, err := l.Accept()
 		if err != nil {
 			continue
 		}
-		go handleServerConn(c, cfg, tables)
+		go handleServerConn(c, cfg, tables, tunnelSrv)
 	}
 }
 
-func handleServerConn(rawConn net.Conn, cfg *config.Config, tables []*sudoku.Table) {
+func handleServerConn(rawConn net.Conn, cfg *config.Config, tables []*sudoku.Table, tunnelSrv *httpmask.TunnelServer) {
+	if tunnelSrv != nil {
+		res, c, err := tunnelSrv.HandleConn(rawConn)
+		if err != nil {
+			log.Printf("[Server][HTTP] tunnel prelude failed: %v", err)
+			rawConn.Close()
+			return
+		}
+		switch res {
+		case httpmask.HandleDone:
+			return
+		case httpmask.HandleStartTunnel:
+			inner := *cfg
+			inner.DisableHTTPMask = true
+			handleSudokuServerConn(c, rawConn, &inner, tables, false)
+			return
+		case httpmask.HandlePassThrough:
+			handleSudokuServerConn(c, rawConn, cfg, tables, true)
+			return
+		default:
+			rawConn.Close()
+			return
+		}
+	}
+
+	handleSudokuServerConn(rawConn, rawConn, cfg, tables, true)
+}
+
+func handleSudokuServerConn(handshakeConn net.Conn, rawConn net.Conn, cfg *config.Config, tables []*sudoku.Table, allowFallback bool) {
 	// Use Tunnel Abstraction for Handshake and Upgrade
-	tunnelConn, err := tunnel.HandshakeAndUpgradeWithTables(rawConn, cfg, tables)
+	tunnelConn, err := tunnel.HandshakeAndUpgradeWithTables(handshakeConn, cfg, tables)
 	if err != nil {
 		if suspErr, ok := err.(*tunnel.SuspiciousError); ok {
 			log.Printf("[Security] Suspicious connection: %v", suspErr.Err)
-			handler.HandleSuspicious(suspErr.Conn, rawConn, cfg)
+			// Only meaningful for direct TCP/legacy mask connections.
+			if allowFallback {
+				handler.HandleSuspicious(suspErr.Conn, rawConn, cfg)
+			} else {
+				rawConn.Close()
+			}
 		} else {
 			log.Printf("[Server] Handshake failed: %v", err)
 			rawConn.Close()

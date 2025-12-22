@@ -12,14 +12,20 @@ import (
 
 // shortLinkPayload holds the minimal fields we expose in sudoku:// links.
 type shortLinkPayload struct {
-	Host           string `json:"h"`           // server host / IP
-	Port           int    `json:"p"`           // server port
-	Key            string `json:"k"`           // shared key
-	ASCII          string `json:"a,omitempty"` // "ascii" or "entropy"
-	AEAD           string `json:"e,omitempty"` // AEAD method
-	MixPort        int    `json:"m,omitempty"` // local mixed proxy port
-	PackedDownlink bool   `json:"x,omitempty"` // bandwidth-optimized downlink (non-pure Sudoku)
-	CustomTable    string `json:"t,omitempty"` // optional custom byte layout
+	Host           string   `json:"h"`            // server host / IP
+	Port           int      `json:"p"`            // server port
+	Key            string   `json:"k"`            // shared key
+	ASCII          string   `json:"a,omitempty"`  // "ascii" or "entropy"
+	AEAD           string   `json:"e,omitempty"`  // AEAD method
+	MixPort        int      `json:"m,omitempty"`  // local mixed proxy port
+	PackedDownlink bool     `json:"x,omitempty"`  // bandwidth-optimized downlink (non-pure Sudoku)
+	CustomTable    string   `json:"t,omitempty"`  // optional custom byte layout
+	CustomTables   []string `json:"ts,omitempty"` // optional custom byte layouts (rotation)
+	// HTTP mask / tunnel controls (optional).
+	DisableHTTPMask bool   `json:"hd,omitempty"` // when true, disable HTTP mask completely
+	HTTPMaskMode    string `json:"hm,omitempty"` // "legacy" / "xhttp" / "pht" / "auto"
+	HTTPMaskTLS     bool   `json:"ht,omitempty"` // enable HTTPS explicitly (otherwise inferred by port)
+	HTTPMaskHost    string `json:"hh,omitempty"` // override HTTP Host/SNI in tunnel modes
 }
 
 // BuildShortLinkFromConfig builds a sudoku:// short link from the provided config.
@@ -50,6 +56,25 @@ func BuildShortLinkFromConfig(cfg *Config, advertiseHost string) (string, error)
 
 	payload.PackedDownlink = !cfg.EnablePureDownlink
 	payload.CustomTable = cfg.CustomTable
+	if len(cfg.CustomTables) > 0 {
+		payload.CustomTables = append([]string(nil), cfg.CustomTables...)
+		// Keep field "t" as a backward-compatible single-table fallback for older clients.
+		if strings.TrimSpace(payload.CustomTable) == "" {
+			payload.CustomTable = cfg.CustomTables[0]
+		}
+	}
+
+	payload.DisableHTTPMask = cfg.DisableHTTPMask
+	mode := strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMode))
+	if mode != "" && mode != "legacy" {
+		payload.HTTPMaskMode = mode
+	}
+	if cfg.HTTPMaskTLS {
+		payload.HTTPMaskTLS = true
+	}
+	if strings.TrimSpace(cfg.HTTPMaskHost) != "" {
+		payload.HTTPMaskHost = strings.TrimSpace(cfg.HTTPMaskHost)
+	}
 
 	payload.ASCII = encodeASCII(cfg.ASCII)
 	if payload.AEAD == "" {
@@ -87,16 +112,21 @@ func BuildConfigFromShortLink(link string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		Mode:          "client",
-		Transport:     "tcp",
-		LocalPort:     payload.MixPort,
-		ServerAddress: fmt.Sprintf("%s:%d", payload.Host, payload.Port),
-		Key:           payload.Key,
-		CustomTable:   payload.CustomTable,
-		AEAD:          payload.AEAD,
-		PaddingMin:    5,
-		PaddingMax:    15,
-		ProxyMode:     "pac",
+		Mode:            "client",
+		Transport:       "tcp",
+		LocalPort:       payload.MixPort,
+		ServerAddress:   net.JoinHostPort(payload.Host, strconv.Itoa(payload.Port)),
+		Key:             payload.Key,
+		CustomTable:     payload.CustomTable,
+		CustomTables:    append([]string(nil), payload.CustomTables...),
+		DisableHTTPMask: payload.DisableHTTPMask,
+		HTTPMaskMode:    payload.HTTPMaskMode,
+		HTTPMaskTLS:     payload.HTTPMaskTLS,
+		HTTPMaskHost:    payload.HTTPMaskHost,
+		AEAD:            payload.AEAD,
+		PaddingMin:      5,
+		PaddingMax:      15,
+		ProxyMode:       "pac",
 		RuleURLs: []string{
 			"https://gh-proxy.org/https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/China/China.list",
 			"https://gh-proxy.org/https://raw.githubusercontent.com/fernvenue/chn-cidr-list/master/ipv4.yaml",
@@ -108,6 +138,9 @@ func BuildConfigFromShortLink(link string) (*Config, error) {
 	}
 
 	cfg.EnablePureDownlink = !payload.PackedDownlink
+	if strings.TrimSpace(cfg.HTTPMaskMode) == "" {
+		cfg.HTTPMaskMode = "legacy"
+	}
 
 	cfg.ASCII = decodeASCII(payload.ASCII)
 	if cfg.AEAD == "" {
@@ -146,8 +179,18 @@ func deriveAdvertiseAddress(cfg *Config, advertiseHost string) (string, int, err
 		return host, port, nil
 	}
 
-	if advertiseHost != "" && cfg.LocalPort > 0 {
-		return advertiseHost, cfg.LocalPort, nil
+	if advertiseHost != "" {
+		// Allow advertiseHost in either "host" form (use cfg.LocalPort) or "host:port" form (explicit port).
+		if h, p, err := net.SplitHostPort(advertiseHost); err == nil && h != "" && p != "" {
+			port, err := strconv.Atoi(p)
+			if err != nil {
+				return "", 0, fmt.Errorf("invalid port in advertise host: %w", err)
+			}
+			return h, port, nil
+		}
+		if cfg.LocalPort > 0 {
+			return advertiseHost, cfg.LocalPort, nil
+		}
 	}
 
 	return "", 0, errors.New("cannot derive server address; set server_address or provide advertise host")

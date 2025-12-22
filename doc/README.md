@@ -10,22 +10,37 @@ Docs map:
 ## Overview
 - **What it is**: TCP tunnel with HTTP masking, Sudoku ASCII/entropy obfuscation, and AEAD encryption; optional bandwidth-optimized downlink plus UoT (UDP-over-TCP).
 - **Binaries**: single `sudoku` entry; configs in JSON; optional `sudoku://` short links for quick client bootstrap.
-- **Ports**: server listens on `local_port`; client exposes mixed HTTP/SOCKS proxy on `local_port`; UDP is relayed via the tunnel (UoT).
+- **Ports**: server `local_port` is the public listening port; client `local_port` is the local mixed HTTP/SOCKS proxy port; UDP is relayed via the tunnel (UoT).
 
 ## Usage
-- Generate keys: `./sudoku -keygen` (prints master+split); or reuse a public key as the shared key.
+- Generate keys: `./sudoku -keygen` (prints master public + client private). Use the server key on server side and client key on client side (see below).
 - Run with config: `./sudoku -c config.json`
 - Test config only: `./sudoku -c config.json -test`
 - Start client from link: `./sudoku -link "sudoku://..."` (PAC mode)
 - Export short link from config: `./sudoku -c config.json -export-link [-public-host your.ip]`
 - Interactive setup (creates server/client configs + link, then starts server): `./sudoku -tui [-public-host your.ip]`
 
+## Key (most important)
+`key` is the shared secret used to build the Sudoku mapping table and to derive the AEAD key (via SHA-256).
+
+- Server config `key`: use `Master Public Key` (32-byte hex) printed by `./sudoku -keygen`.
+- Client config `key`: use `Available Private Key` (64-byte hex) printed by `./sudoku -keygen`.
+- The client will automatically derive the public key and use it as the shared `key` internally (you’ll see `Derived Public Key: ...` in logs).
+- Keep both values private; anyone with the `key` can connect and decrypt AEAD traffic.
+
 ## Protocol (Layers & Principle)
 - **HTTP mask**: random-looking HTTP request on connect.
 - **Sudoku obfuscation**: bytes encoded as 4×4 Sudoku hints; `prefer_ascii` keeps output printable, `prefer_entropy` maximizes entropy.
 - **AEAD**: `chacha20-poly1305` (default), `aes-128-gcm`, or `none` (test only); key hashed with SHA-256 to derive cipher key.
-- **Handshake**: timestamp + nonce; optional split-key derivation when client provided private key.
+- **Handshake**: timestamp + nonce; server validates time skew and mode.
 - **Downlink modes**: pure Sudoku (default) or packed 6-bit downlink (`enable_pure_downlink=false`, requires AEAD).
+
+## How the Sudoku layer hides bytes (high-level)
+- Both sides deterministically generate the same mapping table from `key` (+ optional `custom_table`).
+- Each data byte is encoded into a small 4×4 Sudoku “puzzle hint” (a few clues) chosen from the table.
+- Because there are multiple valid encodings for the same byte, the wire output varies even for identical input.
+- `padding_min/max` inserts extra non-data hints to blur length/timing and stabilize byte distribution.
+- The receiver filters padding, reconstructs hints, and decodes back to the original bytes.
 
 ## Config Templates
 Minimal Server (standard):
@@ -34,7 +49,7 @@ Minimal Server (standard):
   "mode": "server",
   "local_port": 8080,
   "fallback_address": "127.0.0.1:80",
-  "key": "MASTER_OR_SPLIT_PRIVATE_KEY",
+  "key": "MASTER_PUBLIC_KEY",
   "aead": "chacha20-poly1305",
   "suspicious_action": "fallback",
   "padding_min": 5,
@@ -45,25 +60,28 @@ Minimal Server (standard):
 }
 ```
 
-Client (PAC, standard):
+Client (standard):
 ```json
 {
   "mode": "client",
   "local_port": 1080,
   "server_address": "1.2.3.4:8080",
-  "key": "SERVER_PUBLIC_KEY",
+  "key": "AVAILABLE_PRIVATE_KEY",
   "aead": "chacha20-poly1305",
   "padding_min": 5,
   "padding_max": 15,
   "custom_table": "xpxvvpvv",
   "ascii": "prefer_entropy",
-  "proxy_mode": "pac",
-  "rule_urls": []
+  "rule_urls": ["global"]
 }
 ```
 
 Prefer ASCII traffic: set `"ascii": "prefer_ascii"` on both ends. Toggle `"enable_pure_downlink": false` to enable packed downlink.
 Need a custom byte fingerprint? Add `custom_table` with two `x`, two `p`, and four `v` (e.g. `xpxvvpvv`); all 420 permutations are accepted, and ASCII preference still wins if enabled.
+Routing modes (client):
+- `rule_urls: ["global"]` (default): proxy everything
+- `rule_urls: ["direct"]`: proxy nothing (debug only)
+- `rule_urls: [...]` (URLs): PAC mode, direct for CN/local rules and proxy the rest
 
 ## Deployment & Persistence
 - Build: `go build -o sudoku ./cmd/sudoku-tunnel`
@@ -99,6 +117,7 @@ WantedBy=multi-user.target
   - `m` client mixed proxy port (default 1080 if missing)
   - `x` packed downlink (true enables bandwidth-optimized downlink)
   - `t` custom table pattern (optional, same as `custom_table` in config)
+  - Note: short links do not support `custom_tables` (multiple table rotation); only a single `t`/`custom_table` can be carried.
 - Example: `sudoku://eyJoIjoiZXhhbXBsZS5jb20iLCJwIjo4MDgwLCJrIjoiYWJjZCIsImEiOiJhc2NpaSIsIm0iOjEwODAsIm1wIjoyMDEyM30`
 - Client bootstrap: `./sudoku -link "<link>"` (starts PAC proxy).
 - Export from config: `./sudoku -c client.json -export-link [-public-host host]`
@@ -110,22 +129,37 @@ WantedBy=multi-user.target
 ## 概览
 - **功能**：HTTP 伪装 + 数独 ASCII/高熵混淆 + AEAD 加密，可选带宽优化下行。
 - **形态**：单二进制 `sudoku`，JSON 配置；可用 `sudoku://` 短链接直接启动客户端。
-- **端口**：服务端监听 `local_port`；客户端在 `local_port` 提供混合 HTTP/SOCKS 代理；UDP 通过隧道（UoT）转发。
+- **端口**：服务端 `local_port` 是对外监听端口；客户端 `local_port` 是本地混合 HTTP/SOCKS 代理端口；UDP 通过隧道（UoT）转发。
 
 ## 使用方式
-- 生成密钥：`./sudoku -keygen`（输出主密钥与拆分密钥）
+- 生成密钥：`./sudoku -keygen`（输出服务端公钥 + 客户端私钥，见下方说明）
 - 配置运行：`./sudoku -c config.json`
 - 仅校验配置：`./sudoku -c config.json -test`
 - 短链启动客户端：`./sudoku -link "sudoku://..."`（PAC 模式）
 - 从配置导出短链：`./sudoku -c config.json -export-link [-public-host 服务器IP]`
 - 交互式配置并启动服务端：`./sudoku -tui [-public-host 服务器IP]`
 
+## key（最关键）
+`key` 会用于生成数独映射表，同时也会被 SHA-256 后作为 AEAD 的派生密钥。
+
+- 服务端配置 `key`：填 `./sudoku -keygen` 输出的 `Master Public Key`（32 字节 hex）。
+- 客户端配置 `key`：填 `./sudoku -keygen` 输出的 `Available Private Key`（64 字节 hex）。
+- 客户端会自动从私钥推导并在内部使用公钥作为共享 `key`（日志会打印 `Derived Public Key: ...`）。
+- 两者都不要公开；拿到 `key` 的人可以连接并解密 AEAD 流量。
+
 ## 协议定义与原理
 - **HTTP 伪装**：建立连接时先发随机化 HTTP 请求头。
 - **数独混淆**：每字节编码为 4×4 数独提示；`prefer_ascii` 输出可打印字符，`prefer_entropy` 输出高熵字节。
 - **AEAD 加密**：`chacha20-poly1305`（默认）/`aes-128-gcm`/`none`（仅测试）；密钥经 SHA-256 派生。
-- **握手**：时间戳 + 随机/私钥派生 nonce；支持拆分私钥推导。
+- **握手**：时间戳 + nonce；服务端校验时间偏差与模式是否一致。
 - **下行模式**：默认纯数独下行；`enable_pure_downlink=false` 启用 6bit 拆分下行（需 AEAD）。
+
+## 数独层如何“藏”字节（高层理解）
+- 双端会用相同的 `key`（+ 可选 `custom_table`）确定性生成同一张映射表。
+- 每个数据字节会被编码成一个很小的 4×4 数独“提示”（少量 clues），并从映射表中选取。
+- 同一字节通常存在多种合法编码，因此即便输入相同，线上输出也会随机化变化。
+- `padding_min/max` 会插入额外的非数据提示，用于模糊长度/时序并稳定字节分布。
+- 接收端会过滤 padding、还原提示并解码回原始字节。
 
 ## 配置示例
 服务端（标准）：
@@ -134,7 +168,7 @@ WantedBy=multi-user.target
   "mode": "server",
   "local_port": 8080,
   "fallback_address": "127.0.0.1:80",
-  "key": "主或拆分私钥",
+  "key": "粘贴 Master Public Key",
   "aead": "chacha20-poly1305",
   "suspicious_action": "fallback",
   "padding_min": 5,
@@ -145,26 +179,29 @@ WantedBy=multi-user.target
 }
 ```
 
-客户端（PAC，标准）：
+客户端（标准）：
 ```json
 {
   "mode": "client",
   "local_port": 1080,
   "server_address": "1.2.3.4:8080",
-  "key": "服务器公钥",
+  "key": "粘贴 Available Private Key",
   "aead": "chacha20-poly1305",
   "padding_min": 5,
   "padding_max": 15,
   "custom_table": "xpxvvpvv",
   "ascii": "prefer_entropy",
-  "proxy_mode": "pac",
-  "rule_urls": []
+  "rule_urls": ["global"]
 }
 ```
 
 - ASCII 风格：`"ascii": "prefer_ascii"`（客户端/服务端一致）。
 - 带宽优化：将 `"enable_pure_downlink"` 设为 `false` 启用带宽优化下行（需 AEAD）。
 - 自定义字节特征：添加 `custom_table`（两个 `x`、两个 `p`、四个 `v`，如 `xpxvvpvv`，共 420 种排列），`ascii` 优先级最高。
+客户端分流模式（路由）：
+- `rule_urls: ["global"]`（默认）：全局代理
+- `rule_urls: ["direct"]`：全直连（仅用于调试）
+- `rule_urls: [...]`（URL 列表）：PAC 模式，命中 CN/local 规则走直连，其他走代理
 
 ## 部署与守护
 - 构建：`go build -o sudoku ./cmd/sudoku-tunnel`
@@ -185,4 +222,5 @@ WantedBy=multi-user.target
   - `m` 客户端混合代理端口（缺省 1080）
   - `x` 带宽优化下行标记（true=启用）
   - `t` 自定义表型（可选，与 `custom_table` 一致）
+  - 注意：短链接不支持 `custom_tables`（多表轮换）；只能携带单个 `t`/`custom_table`。
 - 启动：`./sudoku -link "<短链>"`；导出：`./sudoku -c client.json -export-link [-public-host]`

@@ -120,6 +120,26 @@ func main() {
 }
 ```
 
+## CDN/代理模式（xhttp / pht）
+如需通过 CDN（例如 Cloudflare 小黄云）转发到服务端，设置 `cfg.DisableHTTPMask=false` 且 `cfg.HTTPMaskMode="auto"`（或 `"xhttp"` / `"pht"`），并在 accept 后使用 `apis.NewHTTPMaskTunnelServer(cfg).HandleConn`：
+
+```go
+srv := apis.NewHTTPMaskTunnelServer(cfg)
+for {
+	rawConn, _ := ln.Accept()
+	go func(c net.Conn) {
+		defer c.Close()
+		tunnel, target, handled, err := srv.HandleConn(c)
+		if err != nil || !handled || tunnel == nil {
+			return
+		}
+		defer tunnel.Close()
+		_ = target
+		io.Copy(tunnel, tunnel)
+	}(rawConn)
+}
+```
+
 ## 说明
 - `DefaultConfig()` 提供合理默认值，仍需设置 `Key`、`Table` 及对应的地址字段。
 - 服务端如需回落（HTTP/原始 TCP），可从 `HandshakeError` 取出 `HTTPHeaderData` 与 `ReadData` 按顺序重放。

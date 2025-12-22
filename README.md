@@ -85,16 +85,26 @@ go build -o sudoku cmd/sudoku-tunnel/main.go
     "vxpvxvvp"
   ],
   "enable_pure_downlink": true,
-  "disable_http_mask": false
+  "disable_http_mask": false,
+  "http_mask_mode": "legacy",
+  "http_mask_tls": false,
+  "http_mask_host": ""
 }
 ```
 Add `"custom_table": "xpxvvpvv"` (two `x`, two `p`, four `v`, 420 permutations allowed) to enforce a custom byte layout; `"ascii": "prefer_ascii"` still overrides it.
 
 For table rotation, use `"custom_tables": ["xpxvvpvv", "vxpvxvvp"]`. When `custom_tables` is non-empty it overrides `custom_table`; the client picks one table per connection and the server probes the handshake to detect it (no extra plaintext negotiation field).
 
+Note: `sudoku://` short links support `custom_tables` (field `ts`, with `t` as a single-table fallback) and CDN-related HTTP mask options (`hm`/`ht`/`hh`). Older links remain compatible.
+
 ### Client Configuration
 
 Change `mode` to `client`, set `server_address` to the Server IP, set `local_port` to the proxy listening port, add `rule_urls` using the template in `configs/config.json`. Toggle `enable_pure_downlink` to `false` if you want the packed downlink mode.
+
+To run behind a CDN/proxy (e.g., Cloudflare orange-cloud), set:
+- `"disable_http_mask": false`
+- `"http_mask_mode": "auto"` (or `"xhttp"` / `"pht"`)
+- client-side `server_address` can be a domain (e.g., `"example.com:443"`); HTTPS is auto-inferred for port `443` (or force via `"http_mask_tls": true`).
 
 **Note**: The Key must be generated specifically by Sudoku.
 

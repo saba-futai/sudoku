@@ -7,6 +7,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/saba-futai/sudoku/internal/config"
@@ -46,6 +47,31 @@ func (d *BaseDialer) pickTable() (byte, *sudoku.Table, error) {
 }
 
 func (d *BaseDialer) dialBase() (net.Conn, error) {
+	// HTTP tunnel (CDN-friendly) modes. The returned conn already strips HTTP headers.
+	if !d.Config.DisableHTTPMask {
+		switch strings.ToLower(strings.TrimSpace(d.Config.HTTPMaskMode)) {
+		case "xhttp", "pht", "auto":
+			dialCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+
+			rawRemote, err := httpmask.DialTunnel(dialCtx, d.Config.ServerAddress, httpmask.TunnelDialOptions{
+				Mode:         d.Config.HTTPMaskMode,
+				TLSEnabled:   d.Config.HTTPMaskTLS,
+				HostOverride: d.Config.HTTPMaskHost,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("dial http tunnel failed: %w", err)
+			}
+
+			tableID, table, err := d.pickTable()
+			if err != nil {
+				rawRemote.Close()
+				return nil, err
+			}
+			return ClientHandshake(rawRemote, d.Config, table, tableID, d.PrivateKey)
+		}
+	}
+
 	// Resolve server address with DNS concurrency and optimistic cache.
 	resolveCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -63,6 +89,7 @@ func (d *BaseDialer) dialBase() (net.Conn, error) {
 
 	// 2. Send HTTP mask
 	if !d.Config.DisableHTTPMask {
+		// Legacy HTTP mask (not CDN-compatible): write a fake HTTP/1.1 header then switch to raw stream.
 		if err := httpmask.WriteRandomRequestHeader(rawRemote, d.Config.ServerAddress); err != nil {
 			rawRemote.Close()
 			return nil, fmt.Errorf("write http mask failed: %w", err)

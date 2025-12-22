@@ -88,7 +88,10 @@ go build -o sudoku cmd/sudoku-tunnel/main.go
     "vxpvxvvp"
   ],
   "enable_pure_downlink": true,
-  "disable_http_mask": false
+  "disable_http_mask": false,
+  "http_mask_mode": "legacy",
+  "http_mask_tls": false,
+  "http_mask_host": ""
 }
 ```
 
@@ -96,9 +99,16 @@ go build -o sudoku cmd/sudoku-tunnel/main.go
 
 如需轮换多套布局（降低长期固定特征被统计学习的风险），使用 `custom_tables`（字符串列表）。当 `custom_tables` 非空时会覆盖 `custom_table`，并在每条连接中随机选择其一；服务端会在握手阶段自动探测表，无需额外明文协商字段。
 
+注意：`sudoku://` 短链接已支持 `custom_tables`（字段 `ts`，并保留 `t` 作为单表回退）以及 CDN 相关的 HTTPMask 选项（`hm`/`ht`/`hh`）；旧链接仍可正常解析。
+
 ### 客户端配置
 
 将 `mode` 改为 `client`，并设置 `server_address` 为服务端 IP，将`local_port` 设置为代理监听端口，添加 `rule_urls` 使用`configs/config.json`的模板填充；如需带宽优化下行，将 `enable_pure_downlink` 置为 `false`。
+
+如需走 CDN/代理（例如 Cloudflare 小黄云），设置：
+- `"disable_http_mask": false`
+- `"http_mask_mode": "auto"`（或 `"xhttp"` / `"pht"`）
+- 客户端 `server_address` 可填写域名（如 `"example.com:443"`）；端口 `443` 会自动使用 HTTPS（或用 `"http_mask_tls": true` 强制）。
 
 **注意**：Key一定要用sudoku专门生成
 

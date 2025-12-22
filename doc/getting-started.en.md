@@ -8,9 +8,10 @@ Step-by-step instructions for absolute beginners to get a working client/server 
 
 
 ## 1) What you need
+- A server with a public IP / domain (or otherwise reachable by the client).
 - OS: Linux / macOS / Windows.
 - Either download the release binary or install Go 1.22+ to build it yourself.
-- Ports: one public port on the server (example: 8080), one local proxy port on the client (default 1080).
+- Ports: one public TCP port on the server (example: 8080), one local proxy port on the client (default 1080). Make sure the server port is open in firewall / security group.
 
 ## 2) Get the binary
 Pick one:
@@ -46,6 +47,7 @@ go build -o sudoku ./cmd/sudoku-tunnel
   "enable_pure_downlink": true
 }
 ```
+Tip: if you don’t have a decoy web server on `fallback_address`, set `"suspicious_action": "silent"` to drop suspicious connections instead.
 
 ## 5) Client config (`client.json`)
 ```json
@@ -60,13 +62,13 @@ go build -o sudoku ./cmd/sudoku-tunnel
   "custom_table": "xpxvvpvv",
   "ascii": "prefer_entropy",
   "disable_http_mask": false,
-  "proxy_mode": "pac",
-  "rule_urls": []
+  "rule_urls": ["global"]
 }
 ```
 - Want plaintext-looking traffic? Set `ascii` to `prefer_ascii` on both sides.
 - Need a custom byte fingerprint? Add `custom_table` (e.g. `xpxvvpvv` with two `x`, two `p`, four `v`; all 420 permutations are valid); ASCII mode still wins if enabled.
 - Want more downlink throughput? Set `enable_pure_downlink` to `false` on both sides to enable the packed mode (AEAD required).
+- Routing mode tip: `rule_urls: ["global"]` proxies everything (simplest). For PAC mode, provide rule URLs (see `doc/README.md`), or start from a short link (`./sudoku -link ...`).
 
 ## 6) Run
 ```bash
@@ -84,6 +86,7 @@ go build -o sudoku ./cmd/sudoku-tunnel
 ## 8) Use or share a short link
 - Start the client directly from a link: `./sudoku -link "sudoku://..."`.
 - Export a link from your config to share: `./sudoku -c client.json -export-link -public-host your.server.com`.
+- Note: short links only carry a single `custom_table` and do not support `custom_tables` rotation.
 
 ## 9) Quick troubleshooting
 - Port in use: change `local_port` or free the port.

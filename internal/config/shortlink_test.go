@@ -3,6 +3,7 @@ package config
 import (
 	"encoding/base64"
 	"encoding/json"
+	"net"
 	"testing"
 )
 
@@ -54,6 +55,79 @@ func TestShortLinkRoundTrip_Client(t *testing.T) {
 	}
 }
 
+func TestShortLinkRoundTrip_CustomTablesAndCDN(t *testing.T) {
+	cfg := &Config{
+		Mode:               "client",
+		LocalPort:          1081,
+		ServerAddress:      "cc.futai.io:443",
+		Key:                "deadbeef",
+		AEAD:               "aes-128-gcm",
+		ASCII:              "prefer_entropy",
+		CustomTables:       []string{"xpxvvpvv", "vxpvxvvp"},
+		EnablePureDownlink: true,
+		DisableHTTPMask:    false,
+		HTTPMaskMode:       "auto",
+		HTTPMaskTLS:        true,
+	}
+
+	link, err := BuildShortLinkFromConfig(cfg, "")
+	if err != nil {
+		t.Fatalf("BuildShortLinkFromConfig error: %v", err)
+	}
+
+	decoded, err := BuildConfigFromShortLink(link)
+	if err != nil {
+		t.Fatalf("BuildConfigFromShortLink error: %v", err)
+	}
+
+	if decoded.ServerAddress != cfg.ServerAddress {
+		t.Fatalf("server address mismatch, got %s", decoded.ServerAddress)
+	}
+	if len(decoded.CustomTables) != len(cfg.CustomTables) {
+		t.Fatalf("custom tables length mismatch, got %d", len(decoded.CustomTables))
+	}
+	for i := range cfg.CustomTables {
+		if decoded.CustomTables[i] != cfg.CustomTables[i] {
+			t.Fatalf("custom tables[%d] mismatch, got %s", i, decoded.CustomTables[i])
+		}
+	}
+	if decoded.CustomTable != cfg.CustomTables[0] {
+		t.Fatalf("custom table fallback mismatch, got %s", decoded.CustomTable)
+	}
+	if decoded.HTTPMaskMode != "auto" {
+		t.Fatalf("http mask mode mismatch, got %s", decoded.HTTPMaskMode)
+	}
+	if !decoded.HTTPMaskTLS {
+		t.Fatalf("http mask tls mismatch, got %v", decoded.HTTPMaskTLS)
+	}
+	if decoded.DisableHTTPMask {
+		t.Fatalf("disable http mask mismatch, got %v", decoded.DisableHTTPMask)
+	}
+}
+
+func TestShortLinkIPv6ServerAddress(t *testing.T) {
+	serverAddr := net.JoinHostPort("2001:db8::1", "443")
+	cfg := &Config{
+		Mode:          "client",
+		LocalPort:     1081,
+		ServerAddress: serverAddr,
+		Key:           "deadbeef",
+	}
+
+	link, err := BuildShortLinkFromConfig(cfg, "")
+	if err != nil {
+		t.Fatalf("BuildShortLinkFromConfig error: %v", err)
+	}
+
+	decoded, err := BuildConfigFromShortLink(link)
+	if err != nil {
+		t.Fatalf("BuildConfigFromShortLink error: %v", err)
+	}
+	if decoded.ServerAddress != serverAddr {
+		t.Fatalf("server address mismatch, got %s", decoded.ServerAddress)
+	}
+}
+
 func TestShortLinkAdvertiseServer(t *testing.T) {
 	cfg := &Config{
 		Mode:               "server",
@@ -71,6 +145,33 @@ func TestShortLinkAdvertiseServer(t *testing.T) {
 	}
 	if link == "" {
 		t.Fatalf("empty link")
+	}
+}
+
+func TestShortLinkAdvertiseHostWithPort(t *testing.T) {
+	cfg := &Config{
+		Mode:               "server",
+		LocalPort:          8080,
+		Key:                "deadbeef",
+		EnablePureDownlink: true,
+		DisableHTTPMask:    false,
+		HTTPMaskMode:       "auto",
+	}
+
+	link, err := BuildShortLinkFromConfig(cfg, "cc.futai.io:443")
+	if err != nil {
+		t.Fatalf("BuildShortLinkFromConfig error: %v", err)
+	}
+
+	decoded, err := BuildConfigFromShortLink(link)
+	if err != nil {
+		t.Fatalf("BuildConfigFromShortLink error: %v", err)
+	}
+	if decoded.ServerAddress != "cc.futai.io:443" {
+		t.Fatalf("server address mismatch, got %s", decoded.ServerAddress)
+	}
+	if decoded.HTTPMaskMode != "auto" {
+		t.Fatalf("http mask mode mismatch, got %s", decoded.HTTPMaskMode)
 	}
 }
 

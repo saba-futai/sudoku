@@ -26,6 +26,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"net"
+	"strings"
 	"time"
 
 	"github.com/saba-futai/sudoku/internal/protocol"
@@ -142,6 +143,55 @@ func establishBaseConn(ctx context.Context, cfg *ProtocolConfig, validate func(*
 	}
 	if err := validate(cfg); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
+	}
+
+	// CDN-capable HTTP tunnel modes.
+	if !cfg.DisableHTTPMask {
+		switch strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMode)) {
+		case "xhttp", "pht", "auto":
+			rawConn, err := httpmask.DialTunnel(ctx, cfg.ServerAddress, httpmask.TunnelDialOptions{
+				Mode:         cfg.HTTPMaskMode,
+				TLSEnabled:   cfg.HTTPMaskTLSEnabled,
+				HostOverride: cfg.HTTPMaskHost,
+			})
+			if err != nil {
+				return nil, fmt.Errorf("dial http tunnel failed: %w", err)
+			}
+
+			success := false
+			defer func() {
+				if !success {
+					rawConn.Close()
+				}
+			}()
+
+			table, tableID, err := pickClientTable(cfg)
+			if err != nil {
+				return nil, err
+			}
+
+			cConn, err := wrapClientConn(rawConn, cfg, table)
+			if err != nil {
+				return nil, err
+			}
+
+			handshake := buildHandshakePayload(cfg.Key)
+			if len(cfg.tableCandidates()) > 1 {
+				handshake[15] = tableID
+			}
+			if _, err := cConn.Write(handshake[:]); err != nil {
+				cConn.Close()
+				return nil, fmt.Errorf("send handshake failed: %w", err)
+			}
+
+			if _, err := cConn.Write([]byte{downlinkMode(cfg)}); err != nil {
+				cConn.Close()
+				return nil, fmt.Errorf("send downlink mode failed: %w", err)
+			}
+
+			success = true
+			return cConn, nil
+		}
 	}
 
 	resolvedAddr, err := dnsutil.ResolveWithCache(ctx, cfg.ServerAddress)

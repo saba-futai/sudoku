@@ -8,9 +8,10 @@
 
 
 ## 1. 准备工作
+- 一台可被客户端访问到的服务器（有公网 IP / 域名，或在同一网络环境可直连）。
 - 电脑：Linux / macOS / Windows 均可。
 - 依赖：已下载发布版二进制，或安装 Go 1.22+ 准备自行编译。
-- 端口：服务端需要一个外网可访问端口（示例用 8080），客户端本地代理端口默认 1080。
+- 端口：服务端需要一个外网可访问的 TCP 端口（示例用 8080），客户端本地代理端口默认 1080；同时确认服务器防火墙/安全组已放行该端口。
 
 ## 2. 获取程序
 二选一：
@@ -48,6 +49,7 @@ go build -o sudoku ./cmd/sudoku-tunnel
   "enable_pure_downlink": true
 }
 ```
+提示：如果你没有在 `fallback_address` 上准备诱饵网页服务，可以把 `"suspicious_action"` 设为 `"silent"`，对可疑连接直接丢弃。
 
 ## 5. 准备客户端配置（client.json）
 将以下内容保存为 `client.json`，把 `server_address` 改成你的服务器地址和端口，把 `key` 换成 Available Private Key：
@@ -63,13 +65,13 @@ go build -o sudoku ./cmd/sudoku-tunnel
   "custom_table": "xpxvvpvv",
   "ascii": "prefer_entropy",
   "disable_http_mask": false,
-  "proxy_mode": "pac",
-  "rule_urls": []
+  "rule_urls": ["global"]
 }
 ```
 - 想要看起来更像纯文本：把 `ascii` 改成 `prefer_ascii`，客户端和服务端需一致。
 - 想要自定义字节指纹：添加 `custom_table`（两个 `x`、两个 `p`、四个 `v`，如 `xpxvvpvv`，共 420 种全排列）；若同时配置 ASCII，则 ASCII 优先生效。
 - 想要更好的下行带宽：两端都将 `enable_pure_downlink` 设为 `false`，开启带宽优化下行（需 AEAD）。
+- 分流提示：`rule_urls: ["global"]` 表示全局代理（最省心）。如需 PAC 分流，请配置规则 URL（见 `doc/README.md`），或直接用短链启动（`./sudoku -link ...`）。
 
 ## 6. 启动
 ```bash
@@ -88,6 +90,7 @@ go build -o sudoku ./cmd/sudoku-tunnel
 - 启动客户端并直接用短链：`./sudoku -link "sudoku://..."`。
 - 从配置导出短链（分享给别人）：`./sudoku -c client.json -export-link -public-host your.server.com`。
 短链可让对方免编辑配置，直接运行即可。
+注意：短链接只支持单个 `custom_table`，不支持 `custom_tables` 多表轮换。
 
 ## 9. 常见问题速查
 - **端口占用**：更换 `local_port` 或释放冲突程序。
