@@ -23,7 +23,7 @@ var (
 	more        = flag.String("more", "", "Generate more Private key (hex) for split key generations")
 	linkInput   = flag.String("link", "", "Start client directly from a sudoku:// short link")
 	exportLink  = flag.Bool("export-link", false, "Print sudoku:// short link generated from the config")
-	publicHost  = flag.String("public-host", "", "Advertised server host for short link generation (server mode)")
+	publicHost  = flag.String("public-host", "", "Advertised server host for short link generation (server mode); supports host or host:port")
 	setupWizard = flag.Bool("tui", false, "Launch interactive TUI to create config before starting")
 )
 

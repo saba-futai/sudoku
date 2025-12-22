@@ -19,4 +19,16 @@ type Config struct {
 	CustomTables       []string `json:"custom_tables"`        // 可选，多套 X/P/V 布局轮换
 	EnablePureDownlink bool     `json:"enable_pure_downlink"` // 启用纯 Sudoku 下行；false 时使用带宽优化下行编码
 	DisableHTTPMask    bool     `json:"disable_http_mask"`
+	// HTTPMaskMode controls how the "HTTP mask" layer behaves:
+	//   - "legacy": write a fake HTTP/1.1 header then switch to raw stream (default, not CDN-compatible)
+	//   - "xhttp": real HTTP tunnel (stream-one), CDN-compatible
+	//   - "pht": plain HTTP tunnel (authorize/push/pull), strong restricted-network pass-through
+	//   - "auto": try xhttp then fall back to pht
+	HTTPMaskMode string `json:"http_mask_mode"`
+	// HTTPMaskTLS enables HTTPS for HTTP tunnel modes (client-side). If unset/false, the default is auto-inferred
+	// from server port (443 => HTTPS, otherwise HTTP).
+	HTTPMaskTLS bool `json:"http_mask_tls"`
+	// HTTPMaskHost optionally overrides the HTTP Host header / SNI host for HTTP tunnel modes (client-side).
+	// When empty, it is derived from ServerAddress.
+	HTTPMaskHost string `json:"http_mask_host"`
 }

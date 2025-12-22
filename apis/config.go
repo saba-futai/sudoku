@@ -21,6 +21,7 @@ package apis
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
 )
@@ -102,6 +103,21 @@ type ProtocolConfig struct {
 	// 如果为 true，客户端不发送伪装头，服务端也不检测伪装头
 	// 注意：服务端支持自动检测，即使此项为 false，也能处理不带伪装头的客户端（前提是首字节不匹配 POST）
 	DisableHTTPMask bool
+
+	// HTTPMaskMode controls how the "HTTP mask" behaves:
+	//   - "legacy": write a fake HTTP/1.1 header then switch to raw stream (default, not CDN-compatible)
+	//   - "xhttp": real HTTP tunnel (stream-one), CDN-compatible
+	//   - "pht": plain HTTP tunnel (authorize/push/pull), strong restricted-network pass-through
+	//   - "auto": try xhttp then fall back to pht
+	HTTPMaskMode string
+
+	// HTTPMaskTLSEnabled enables HTTPS for HTTP tunnel modes (client-side). If false, the default is auto-inferred
+	// from ServerAddress port (443 => HTTPS, otherwise HTTP).
+	HTTPMaskTLSEnabled bool
+
+	// HTTPMaskHost optionally overrides the HTTP Host header / SNI host for HTTP tunnel modes (client-side).
+	// When empty, it is derived from ServerAddress.
+	HTTPMaskHost string
 }
 
 // Validate 验证配置的有效性
@@ -147,6 +163,12 @@ func (c *ProtocolConfig) Validate() error {
 		return fmt.Errorf("HandshakeTimeoutSeconds must be >= 0, got %d", c.HandshakeTimeoutSeconds)
 	}
 
+	switch strings.ToLower(strings.TrimSpace(c.HTTPMaskMode)) {
+	case "", "legacy", "xhttp", "pht", "auto":
+	default:
+		return fmt.Errorf("invalid HTTPMaskMode: %s, must be one of: legacy, xhttp, pht, auto", c.HTTPMaskMode)
+	}
+
 	return nil
 }
 
@@ -173,6 +195,7 @@ func DefaultConfig() *ProtocolConfig {
 		PaddingMax:              30,
 		EnablePureDownlink:      true,
 		HandshakeTimeoutSeconds: 5,
+		HTTPMaskMode:            "legacy",
 	}
 }
 
