@@ -79,14 +79,42 @@ func DialTunnel(ctx context.Context, serverAddress string, opts TunnelDialOption
 	case TunnelModePHT:
 		return dialPHT(ctx, serverAddress, opts)
 	case TunnelModeAuto:
-		c, err := dialXHTTP(ctx, serverAddress, opts)
-		if err == nil {
+		c, errX := dialXHTTP(ctx, serverAddress, opts)
+		if errX == nil {
 			return c, nil
 		}
-		return dialPHT(ctx, serverAddress, opts)
+		c, errP := dialPHT(ctx, serverAddress, opts)
+		if errP == nil {
+			return c, nil
+		}
+		return nil, fmt.Errorf("auto tunnel failed: xhttp: %v; pht: %w", errX, errP)
 	default:
 		return dialXHTTP(ctx, serverAddress, opts)
 	}
+}
+
+func canonicalHeaderHost(urlHost, scheme string) string {
+	host, port, err := net.SplitHostPort(urlHost)
+	if err != nil {
+		return urlHost
+	}
+
+	defaultPort := ""
+	switch scheme {
+	case "https":
+		defaultPort = "443"
+	case "http":
+		defaultPort = "80"
+	}
+	if defaultPort == "" || port != defaultPort {
+		return urlHost
+	}
+
+	// If we strip the port from an IPv6 literal, re-add brackets to keep the Host header valid.
+	if strings.Contains(host, ":") {
+		return "[" + host + "]"
+	}
+	return host
 }
 
 type httpStreamConn struct {
@@ -121,6 +149,7 @@ func dialXHTTP(ctx context.Context, serverAddress string, opts TunnelDialOptions
 	if err != nil {
 		return nil, err
 	}
+	headerHost := canonicalHeaderHost(urlHost, scheme)
 
 	r := rngPool.Get().(*mrand.Rand)
 	path := paths[r.Intn(len(paths))]
@@ -146,7 +175,7 @@ func dialXHTTP(ctx context.Context, serverAddress string, opts TunnelDialOptions
 		_ = reqBodyW.Close()
 		return nil, err
 	}
-	req.Host = urlHost
+	req.Host = headerHost
 
 	req.Header.Set("User-Agent", ua)
 	req.Header.Set("Accept", accept)
@@ -168,7 +197,10 @@ func dialXHTTP(ctx context.Context, serverAddress string, opts TunnelDialOptions
 		TLSHandshakeTimeout: 10 * time.Second,
 		DialContext: func(dialCtx context.Context, network, addr string) (net.Conn, error) {
 			var d net.Dialer
-			return d.DialContext(dialCtx, network, dialAddr)
+			if addr == urlHost {
+				addr = dialAddr
+			}
+			return d.DialContext(dialCtx, network, addr)
 		},
 	}
 	if scheme == "https" {
@@ -296,6 +328,7 @@ func dialPHT(ctx context.Context, serverAddress string, opts TunnelDialOptions) 
 	if err != nil {
 		return nil, err
 	}
+	headerHost := canonicalHeaderHost(urlHost, scheme)
 
 	transport := &http.Transport{
 		Proxy:               http.ProxyFromEnvironment,
@@ -306,7 +339,10 @@ func dialPHT(ctx context.Context, serverAddress string, opts TunnelDialOptions) 
 		TLSHandshakeTimeout: 10 * time.Second,
 		DialContext: func(dialCtx context.Context, network, addr string) (net.Conn, error) {
 			var d net.Dialer
-			return d.DialContext(dialCtx, network, dialAddr)
+			if addr == urlHost {
+				addr = dialAddr
+			}
+			return d.DialContext(dialCtx, network, addr)
 		},
 	}
 	if scheme == "https" {
@@ -325,8 +361,8 @@ func dialPHT(ctx context.Context, serverAddress string, opts TunnelDialOptions) 
 	if err != nil {
 		return nil, err
 	}
-	req.Host = urlHost
-	applyTunnelHeaders(req.Header, urlHost, TunnelModePHT)
+	req.Host = headerHost
+	applyTunnelHeaders(req.Header, headerHost, TunnelModePHT)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -359,7 +395,7 @@ func dialPHT(ctx context.Context, serverAddress string, opts TunnelDialOptions) 
 		pushURL:    pushURL,
 		pullURL:    pullURL,
 		closeURL:   closeURL,
-		headerHost: urlHost,
+		headerHost: headerHost,
 		rxc:        make(chan []byte, 128),
 		closed:     make(chan struct{}),
 		writeCh:    make(chan []byte, 256),
