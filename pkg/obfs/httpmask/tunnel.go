@@ -126,6 +126,33 @@ func canonicalHeaderHost(urlHost, scheme string) string {
 	return host
 }
 
+func parseTunnelToken(body []byte) (string, error) {
+	s := strings.TrimSpace(string(body))
+	idx := strings.Index(s, "token=")
+	if idx < 0 {
+		return "", errors.New("missing token")
+	}
+	s = s[idx+len("token="):]
+	if s == "" {
+		return "", errors.New("empty token")
+	}
+	// Token is base64.RawURLEncoding (A-Z a-z 0-9 - _). Strip any trailing bytes (e.g. from CDN compression).
+	var b strings.Builder
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '_' {
+			b.WriteByte(c)
+			continue
+		}
+		break
+	}
+	token := b.String()
+	if token == "" {
+		return "", errors.New("empty token")
+	}
+	return token, nil
+}
+
 type httpStreamConn struct {
 	reader io.ReadCloser
 	writer *io.PipeWriter
@@ -408,11 +435,10 @@ func dialXHTTPSplit(ctx context.Context, serverAddress string, opts TunnelDialOp
 		return nil, fmt.Errorf("xhttp authorize bad status: %s (%s)", resp.Status, strings.TrimSpace(string(bodyBytes)))
 	}
 
-	bodyStr := strings.TrimSpace(string(bodyBytes))
-	if !strings.HasPrefix(bodyStr, "token=") {
-		return nil, fmt.Errorf("xhttp authorize failed: %q", bodyStr)
+	token, err := parseTunnelToken(bodyBytes)
+	if err != nil {
+		return nil, fmt.Errorf("xhttp authorize failed: %q", strings.TrimSpace(string(bodyBytes)))
 	}
-	token := strings.TrimPrefix(bodyStr, "token=")
 	if token == "" {
 		return nil, fmt.Errorf("xhttp authorize empty token")
 	}
@@ -752,11 +778,10 @@ func dialPHT(ctx context.Context, serverAddress string, opts TunnelDialOptions) 
 		return nil, fmt.Errorf("pht authorize bad status: %s (%s)", resp.Status, strings.TrimSpace(string(bodyBytes)))
 	}
 
-	bodyStr := strings.TrimSpace(string(bodyBytes))
-	if !strings.HasPrefix(bodyStr, "token=") {
-		return nil, fmt.Errorf("pht authorize failed: %q", bodyStr)
+	token, err := parseTunnelToken(bodyBytes)
+	if err != nil {
+		return nil, fmt.Errorf("pht authorize failed: %q", strings.TrimSpace(string(bodyBytes)))
 	}
-	token := strings.TrimPrefix(bodyStr, "token=")
 	if token == "" {
 		return nil, fmt.Errorf("pht authorize empty token")
 	}
@@ -1396,6 +1421,15 @@ func writeSimpleHTTPResponse(w io.Writer, code int, body string) error {
 	return err
 }
 
+func writeTokenHTTPResponse(w io.Writer, token string) error {
+	token = strings.TrimRight(token, "\r\n")
+	// Use application/octet-stream to avoid CDN auto-compression (e.g. brotli) breaking clients that expect a plain token string.
+	_, err := io.WriteString(w,
+		fmt.Sprintf("HTTP/1.1 200 OK\r\nContent-Type: application/octet-stream\r\nCache-Control: no-store\r\nPragma: no-cache\r\nContent-Length: %d\r\nConnection: close\r\n\r\ntoken=%s",
+			len("token=")+len(token), token))
+	return err
+}
+
 func (s *TunnelServer) handlePHT(rawConn net.Conn, req *httpRequestHeader, buffered []byte) (HandleResult, net.Conn, error) {
 	u, err := url.ParseRequestURI(req.target)
 	if err != nil {
@@ -1460,7 +1494,7 @@ func (s *TunnelServer) phtAuthorize(rawConn net.Conn) (HandleResult, net.Conn, e
 
 	go s.reapLater(token)
 
-	_ = writeSimpleHTTPResponse(rawConn, http.StatusOK, "token="+token)
+	_ = writeTokenHTTPResponse(rawConn, token)
 	_ = rawConn.Close()
 	return HandleStartTunnel, c1, nil
 }
