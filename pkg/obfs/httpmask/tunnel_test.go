@@ -1,6 +1,17 @@
 package httpmask
 
-import "testing"
+import (
+	"bufio"
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"net"
+	"net/http"
+	"strings"
+	"testing"
+	"time"
+)
 
 func TestCanonicalHeaderHost(t *testing.T) {
 	tests := []struct {
@@ -24,5 +35,206 @@ func TestCanonicalHeaderHost(t *testing.T) {
 				t.Fatalf("canonicalHeaderHost(%q, %q) = %q, want %q", tt.urlHost, tt.scheme, got, tt.wantHost)
 			}
 		})
+	}
+}
+
+func TestDialTunnel_Auto_FallsBackToPHTWithFreshContext(t *testing.T) {
+	prevX := dialXHTTPFn
+	prevP := dialPHTFn
+	t.Cleanup(func() {
+		dialXHTTPFn = prevX
+		dialPHTFn = prevP
+	})
+
+	var xCalled, pCalled int
+	dialXHTTPFn = func(ctx context.Context, serverAddress string, opts TunnelDialOptions) (net.Conn, error) {
+		xCalled++
+		dl, ok := ctx.Deadline()
+		if !ok {
+			t.Fatalf("xhttp ctx missing deadline")
+		}
+		remain := time.Until(dl)
+		if remain < 2*time.Second || remain > 4*time.Second {
+			t.Fatalf("xhttp ctx deadline not in expected range, remaining=%s", remain)
+		}
+		return nil, errors.New("xhttp forced fail")
+	}
+
+	var peer net.Conn
+	dialPHTFn = func(ctx context.Context, serverAddress string, opts TunnelDialOptions) (net.Conn, error) {
+		pCalled++
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
+		c1, c2 := net.Pipe()
+		peer = c2
+		return c1, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+
+	c, err := DialTunnel(ctx, "example.com:443", TunnelDialOptions{Mode: "auto", TLSEnabled: true})
+	if err != nil {
+		t.Fatalf("DialTunnel(auto) error: %v", err)
+	}
+	if xCalled != 1 || pCalled != 1 {
+		_ = c.Close()
+		if peer != nil {
+			_ = peer.Close()
+		}
+		t.Fatalf("unexpected calls: xhttp=%d pht=%d", xCalled, pCalled)
+	}
+	_ = c.Close()
+	if peer != nil {
+		_ = peer.Close()
+	}
+}
+
+func TestTunnelServer_XHTTP_SplitSession_PushPull(t *testing.T) {
+	srv := NewTunnelServer(TunnelServerOptions{
+		Mode:               "xhttp",
+		PHTPullReadTimeout: 50 * time.Millisecond,
+		PHTSessionTTL:      5 * time.Second,
+	})
+
+	authorize := func() (token string, stream net.Conn) {
+		client, server := net.Pipe()
+		t.Cleanup(func() { _ = client.Close() })
+
+		var (
+			res HandleResult
+			c   net.Conn
+			err error
+		)
+		done := make(chan struct{})
+		go func() {
+			res, c, err = srv.HandleConn(server)
+			close(done)
+		}()
+
+		_, _ = io.WriteString(client,
+			"GET /session HTTP/1.1\r\n"+
+				"Host: example.com\r\n"+
+				"X-Sudoku-Tunnel: xhttp\r\n"+
+				"X-Sudoku-Version: 1\r\n"+
+				"\r\n")
+		raw, _ := io.ReadAll(client)
+		<-done
+
+		if err != nil {
+			t.Fatalf("authorize HandleConn error: %v", err)
+		}
+		if res != HandleStartTunnel || c == nil {
+			t.Fatalf("authorize unexpected result: res=%v conn=%v", res, c)
+		}
+
+		parts := strings.SplitN(string(raw), "\r\n\r\n", 2)
+		if len(parts) != 2 {
+			_ = c.Close()
+			t.Fatalf("authorize invalid http response: %q", string(raw))
+		}
+		body := strings.TrimSpace(parts[1])
+		if !strings.HasPrefix(body, "token=") {
+			_ = c.Close()
+			t.Fatalf("authorize missing token, body=%q", body)
+		}
+		token = strings.TrimPrefix(body, "token=")
+		if token == "" {
+			_ = c.Close()
+			t.Fatalf("authorize empty token")
+		}
+		return token, c
+	}
+
+	token, stream := authorize()
+	t.Cleanup(func() {
+		srv.phtClose(token)
+		_ = stream.Close()
+	})
+
+	// Push bytes into the session.
+	{
+		client, server := net.Pipe()
+		done := make(chan struct{})
+		go func() {
+			_, _, _ = srv.HandleConn(server)
+			close(done)
+		}()
+
+		payload := "abc"
+		type readResult struct {
+			b   []byte
+			err error
+		}
+		readCh := make(chan readResult, 1)
+		go func() {
+			buf := make([]byte, len(payload))
+			_ = stream.SetReadDeadline(time.Now().Add(2 * time.Second))
+			_, err := io.ReadFull(stream, buf)
+			readCh <- readResult{b: buf, err: err}
+		}()
+
+		_, _ = io.WriteString(client, fmt.Sprintf(
+			"POST /api/v1/upload?token=%s HTTP/1.1\r\n"+
+				"Host: example.com\r\n"+
+				"X-Sudoku-Tunnel: xhttp\r\n"+
+				"X-Sudoku-Version: 1\r\n"+
+				"Content-Length: %d\r\n"+
+				"\r\n"+
+				"%s", token, len(payload), payload))
+		_, _ = io.ReadAll(client)
+		<-done
+		_ = client.Close()
+
+		rr := <-readCh
+		if rr.err != nil {
+			t.Fatalf("read pushed payload error: %v", rr.err)
+		}
+		if got := string(rr.b); got != payload {
+			t.Fatalf("pushed payload mismatch: got %q want %q", got, payload)
+		}
+	}
+
+	// Pull bytes from the session.
+	{
+		client, server := net.Pipe()
+		done := make(chan struct{})
+		go func() {
+			_, _, _ = srv.HandleConn(server)
+			close(done)
+		}()
+
+		_, _ = io.WriteString(client, fmt.Sprintf(
+			"GET /stream?token=%s HTTP/1.1\r\n"+
+				"Host: example.com\r\n"+
+				"X-Sudoku-Tunnel: xhttp\r\n"+
+				"X-Sudoku-Version: 1\r\n"+
+				"\r\n", token))
+
+		br := bufio.NewReader(client)
+		resp, err := http.ReadResponse(br, &http.Request{Method: http.MethodGet})
+		if err != nil {
+			t.Fatalf("read pull response error: %v", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("pull status=%s", resp.Status)
+		}
+
+		writeDone := make(chan struct{})
+		go func() {
+			_, _ = stream.Write([]byte("xyz"))
+			close(writeDone)
+		}()
+
+		body, _ := io.ReadAll(resp.Body)
+		<-writeDone
+		<-done
+		_ = client.Close()
+
+		if string(body) != "xyz" {
+			t.Fatalf("pulled payload mismatch: got %q want %q", string(body), "xyz")
+		}
 	}
 }
