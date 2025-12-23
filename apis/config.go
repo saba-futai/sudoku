@@ -106,9 +106,9 @@ type ProtocolConfig struct {
 
 	// HTTPMaskMode controls how the "HTTP mask" behaves:
 	//   - "legacy": write a fake HTTP/1.1 header then switch to raw stream (default, not CDN-compatible)
-	//   - "xhttp": real HTTP tunnel (stream-one), CDN-compatible
-	//   - "pht": plain HTTP tunnel (authorize/push/pull), strong restricted-network pass-through
-	//   - "auto": try xhttp then fall back to pht
+	//   - "stream": real HTTP tunnel (stream-one), CDN-compatible
+	//   - "poll": plain HTTP tunnel (authorize/push/pull), strong restricted-network pass-through
+	//   - "auto": try stream then fall back to poll
 	HTTPMaskMode string
 
 	// HTTPMaskTLSEnabled enables HTTPS for HTTP tunnel modes (client-side). If false, the default is auto-inferred
@@ -164,9 +164,9 @@ func (c *ProtocolConfig) Validate() error {
 	}
 
 	switch strings.ToLower(strings.TrimSpace(c.HTTPMaskMode)) {
-	case "", "legacy", "xhttp", "pht", "auto":
+	case "", "legacy", "stream", "poll", "auto":
 	default:
-		return fmt.Errorf("invalid HTTPMaskMode: %s, must be one of: legacy, xhttp, pht, auto", c.HTTPMaskMode)
+		return fmt.Errorf("invalid HTTPMaskMode: %s, must be one of: legacy, stream, poll, auto", c.HTTPMaskMode)
 	}
 
 	return nil

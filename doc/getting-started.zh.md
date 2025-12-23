@@ -74,9 +74,9 @@ go build -o sudoku ./cmd/sudoku-tunnel
 - 分流提示：`rule_urls: ["global"]` 表示全局代理（最省心）。如需 PAC 分流，请配置规则 URL（见 `doc/README.md`），或直接用短链启动（`./sudoku -link ...`）。
 
 ## 5.1（可选）过 Cloudflare CDN（小黄云）
-如需走 Cloudflare CDN/反代，请使用真实 HTTP 隧道模式（`xhttp` / `pht` / `auto`），不要用 `legacy`。
+如需走 Cloudflare CDN/反代，请使用真实 HTTP 隧道模式（`stream` / `poll` / `auto`），不要用 `legacy`。
 
-- 服务端：`"disable_http_mask": false`，并将 `"http_mask_mode"` 设为 `"pht"`（或 `"auto"`）。
+- 服务端：`"disable_http_mask": false`，并将 `"http_mask_mode"` 设为 `"poll"`（或 `"auto"`）。
 - 客户端：同样开启 HTTP mask，并把 `"server_address"` 填成 Cloudflare 域名（例如 `"your.domain.com:443"`；也可用 Cloudflare 支持的 `8080`/`8443` 等端口）。
 - `443` 会自动走 HTTPS；如需强制 HTTPS，可设 `"http_mask_tls": true`。
 

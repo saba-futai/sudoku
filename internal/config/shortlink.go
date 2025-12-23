@@ -23,7 +23,7 @@ type shortLinkPayload struct {
 	CustomTables   []string `json:"ts,omitempty"` // optional custom byte layouts (rotation)
 	// HTTP mask / tunnel controls (optional).
 	DisableHTTPMask bool   `json:"hd,omitempty"` // when true, disable HTTP mask completely
-	HTTPMaskMode    string `json:"hm,omitempty"` // "legacy" / "xhttp" / "pht" / "auto"
+	HTTPMaskMode    string `json:"hm,omitempty"` // "legacy" / "stream" / "poll" / "auto"
 	HTTPMaskTLS     bool   `json:"ht,omitempty"` // enable HTTPS explicitly (otherwise inferred by port)
 	HTTPMaskHost    string `json:"hh,omitempty"` // override HTTP Host/SNI in tunnel modes
 }

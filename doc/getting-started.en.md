@@ -71,9 +71,9 @@ Tip: if you don’t have a decoy web server on `fallback_address`, set `"suspici
 - Routing mode tip: `rule_urls: ["global"]` proxies everything (simplest). For PAC mode, provide rule URLs (see `doc/README.md`), or start from a short link (`./sudoku -link ...`).
 
 ## 5.1) Optional: Cloudflare CDN (orange cloud)
-To run through Cloudflare (or other CDN/reverse-proxy), use real HTTP tunnel modes (`xhttp` / `pht` / `auto`). Do not use `legacy`.
+To run through Cloudflare (or other CDN/reverse-proxy), use real HTTP tunnel modes (`stream` / `poll` / `auto`). Do not use `legacy`.
 
-- Server: set `"disable_http_mask": false` and `"http_mask_mode": "pht"` (or `"auto"`).
+- Server: set `"disable_http_mask": false` and `"http_mask_mode": "poll"` (or `"auto"`).
 - Client: same, and set `"server_address": "your.domain.com:443"` (or other Cloudflare-supported HTTP(S) ports like `8080`/`8443`).
 - Port `443` implies HTTPS automatically; to force HTTPS explicitly, set `"http_mask_tls": true`.
 

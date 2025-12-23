@@ -10,9 +10,9 @@ import (
 	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
 )
 
-func BenchmarkHTTPMaskTunnel_XHTTP(b *testing.B) {
+func BenchmarkHTTPMaskTunnel_Stream(b *testing.B) {
 	table := sudoku.NewTable("seed", "prefer_ascii")
-	key := "bench-key-xhttp"
+	key := "bench-key-stream"
 
 	serverCfg := &apis.ProtocolConfig{
 		Key:                     key,
@@ -38,7 +38,7 @@ func BenchmarkHTTPMaskTunnel_XHTTP(b *testing.B) {
 		PaddingMax:         0,
 		EnablePureDownlink: true,
 		DisableHTTPMask:    false,
-		HTTPMaskMode:       "xhttp",
+		HTTPMaskMode:       "stream",
 	}
 
 	msg := []byte("ping")
@@ -58,9 +58,9 @@ func BenchmarkHTTPMaskTunnel_XHTTP(b *testing.B) {
 	}
 }
 
-func BenchmarkHTTPMaskTunnel_PHT(b *testing.B) {
+func BenchmarkHTTPMaskTunnel_Poll(b *testing.B) {
 	table := sudoku.NewTable("seed", "prefer_ascii")
-	key := "bench-key-pht"
+	key := "bench-key-poll"
 
 	serverCfg := &apis.ProtocolConfig{
 		Key:                     key,
@@ -86,7 +86,7 @@ func BenchmarkHTTPMaskTunnel_PHT(b *testing.B) {
 		PaddingMax:         0,
 		EnablePureDownlink: true,
 		DisableHTTPMask:    false,
-		HTTPMaskMode:       "pht",
+		HTTPMaskMode:       "poll",
 	}
 
 	msg := []byte("ping")

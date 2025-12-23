@@ -120,8 +120,8 @@ func main() {
 }
 ```
 
-## CDN/代理模式（xhttp / pht）
-如需通过 CDN（例如 Cloudflare 小黄云）转发到服务端，设置 `cfg.DisableHTTPMask=false` 且 `cfg.HTTPMaskMode="auto"`（或 `"xhttp"` / `"pht"`），并在 accept 后使用 `apis.NewHTTPMaskTunnelServer(cfg).HandleConn`：
+## CDN/代理模式（stream / poll）
+如需通过 CDN（例如 Cloudflare 小黄云）转发到服务端，设置 `cfg.DisableHTTPMask=false` 且 `cfg.HTTPMaskMode="auto"`（或 `"stream"` / `"poll"`），并在 accept 后使用 `apis.NewHTTPMaskTunnelServer(cfg).HandleConn`：
 
 ```go
 srv := apis.NewHTTPMaskTunnelServer(cfg)
@@ -144,4 +144,4 @@ for {
 - `DefaultConfig()` 提供合理默认值，仍需设置 `Key`、`Table` 及对应的地址字段。
 - 服务端如需回落（HTTP/原始 TCP），可从 `HandshakeError` 取出 `HTTPHeaderData` 与 `ReadData` 按顺序重放。
 - 带宽优化模式：将 `enable_pure_downlink` 设为 `false`，需启用 AEAD。
-- 如需 UoT，调用 `DialUDPOverTCP` / `DetectUoT` + `HandleUoT`。
+- 如需 UoT，客户端调用 `DialUDPOverTCP`；服务端可用 `ServerHandshakeAuto`（或 `HTTPMaskTunnelServer.HandleConnAuto`）自动区分 TCP/UoT，随后对 UoT 连接调用 `HandleUoT`。

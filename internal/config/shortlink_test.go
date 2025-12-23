@@ -183,7 +183,7 @@ func TestShortLinkServerDeriveHostFromFallback(t *testing.T) {
 		EnablePureDownlink: true,
 		FallbackAddr:       "8.219.204.112:11415",
 		DisableHTTPMask:    false,
-		HTTPMaskMode:       "pht",
+		HTTPMaskMode:       "poll",
 	}
 
 	link, err := BuildShortLinkFromConfig(cfg, "")
@@ -199,7 +199,7 @@ func TestShortLinkServerDeriveHostFromFallback(t *testing.T) {
 	if decoded.ServerAddress != "8.219.204.112:10059" {
 		t.Fatalf("server address mismatch, got %s", decoded.ServerAddress)
 	}
-	if decoded.HTTPMaskMode != "pht" {
+	if decoded.HTTPMaskMode != "poll" {
 		t.Fatalf("http mask mode mismatch, got %s", decoded.HTTPMaskMode)
 	}
 }

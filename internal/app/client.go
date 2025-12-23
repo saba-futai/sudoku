@@ -249,7 +249,11 @@ func handleSocks5UDPAssociate(ctrl net.Conn, cfg *config.Config, dialer tunnel.D
 		return
 	}
 
-	udpConn, err := net.ListenUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0})
+	localIP := ipFromNetAddr(ctrl.LocalAddr())
+	remoteIP := ipFromNetAddr(ctrl.RemoteAddr())
+	udpNet, udpBindIP := udpNetworkAndBindIP(localIP, remoteIP)
+
+	udpConn, err := net.ListenUDP(udpNet, &net.UDPAddr{IP: udpBindIP, Port: 0})
 	if err != nil {
 		ctrl.Write([]byte{0x05, 0x01, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 		return
@@ -262,7 +266,8 @@ func handleSocks5UDPAssociate(ctrl net.Conn, cfg *config.Config, dialer tunnel.D
 		return
 	}
 
-	reply := buildUDPAssociateReply(udpConn)
+	replyIP := selectUDPAssociateReplyIP(localIP, remoteIP)
+	reply := buildUDPAssociateReply(replyIP, udpConn.LocalAddr().(*net.UDPAddr).Port, localIP, remoteIP)
 	if _, err := ctrl.Write(reply); err != nil {
 		udpConn.Close()
 		uotConn.Close()
@@ -274,11 +279,13 @@ func handleSocks5UDPAssociate(ctrl net.Conn, cfg *config.Config, dialer tunnel.D
 	session.run()
 }
 
-func buildUDPAssociateReply(udpConn *net.UDPConn) []byte {
-	addr := udpConn.LocalAddr().(*net.UDPAddr)
-	host := addr.IP
-	if host == nil || host.IsUnspecified() {
-		host = net.ParseIP("127.0.0.1")
+func buildUDPAssociateReply(host net.IP, port int, localIP net.IP, remoteIP net.IP) []byte {
+	if host == nil {
+		// Reply 0.0.0.0/:: to indicate "use the TCP endpoint host" (common SOCKS5 client behavior).
+		host = net.IPv4zero
+		if isIPv6Only(localIP, remoteIP) {
+			host = net.IPv6unspecified
+		}
 	}
 
 	buf := &bytes.Buffer{}
@@ -293,9 +300,77 @@ func buildUDPAssociateReply(udpConn *net.UDPConn) []byte {
 	}
 
 	portBytes := make([]byte, 2)
-	binary.BigEndian.PutUint16(portBytes, uint16(addr.Port))
+	binary.BigEndian.PutUint16(portBytes, uint16(port))
 	buf.Write(portBytes)
 	return buf.Bytes()
+}
+
+func normalizeIP(ip net.IP) net.IP {
+	if ip == nil {
+		return nil
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		return ip4
+	}
+	return ip.To16()
+}
+
+func ipFromNetAddr(addr net.Addr) net.IP {
+	if addr == nil {
+		return nil
+	}
+	switch a := addr.(type) {
+	case *net.TCPAddr:
+		return normalizeIP(a.IP)
+	case *net.UDPAddr:
+		return normalizeIP(a.IP)
+	default:
+		host, _, err := net.SplitHostPort(addr.String())
+		if err != nil {
+			return nil
+		}
+		return normalizeIP(net.ParseIP(host))
+	}
+}
+
+func isIPv6Only(localIP net.IP, remoteIP net.IP) bool {
+	localIP = normalizeIP(localIP)
+	remoteIP = normalizeIP(remoteIP)
+	if localIP != nil {
+		return localIP.To4() == nil
+	}
+	if remoteIP != nil {
+		return remoteIP.To4() == nil
+	}
+	return false
+}
+
+func udpNetworkAndBindIP(localIP net.IP, remoteIP net.IP) (string, net.IP) {
+	if isIPv6Only(localIP, remoteIP) {
+		return "udp6", net.IPv6unspecified
+	}
+	return "udp4", net.IPv4zero
+}
+
+func selectUDPAssociateReplyIP(localIP net.IP, remoteIP net.IP) net.IP {
+	localIP = normalizeIP(localIP)
+	remoteIP = normalizeIP(remoteIP)
+
+	if localIP == nil || localIP.IsUnspecified() {
+		return nil
+	}
+	if localIP.IsLoopback() {
+		// Local client: return loopback for maximum compatibility.
+		return localIP
+	}
+	if !localIP.IsGlobalUnicast() {
+		return nil
+	}
+	// Avoid advertising a private IP to a public client (typical NAT port-forward situation).
+	if localIP.IsPrivate() && (remoteIP == nil || !remoteIP.IsPrivate()) {
+		return nil
+	}
+	return localIP
 }
 
 type uotClientSession struct {
@@ -307,6 +382,8 @@ type uotClientSession struct {
 
 	clientAddrMu sync.RWMutex
 	clientAddr   *net.UDPAddr
+
+	allowedClientIP net.IP
 }
 
 func newUoTClientSession(ctrl net.Conn, udpConn *net.UDPConn, uotConn net.Conn) *uotClientSession {
@@ -315,6 +392,8 @@ func newUoTClientSession(ctrl net.Conn, udpConn *net.UDPConn, uotConn net.Conn) 
 		udpConn:  udpConn,
 		uotConn:  uotConn,
 		closed:   make(chan struct{}),
+		// Restrict UDP relay to the control connection's source IP to prevent hijacking/open relay.
+		allowedClientIP: ipFromNetAddr(ctrl.RemoteAddr()),
 	}
 }
 
@@ -359,6 +438,9 @@ func (s *uotClientSession) pipeClientToServer() {
 			s.close()
 			return
 		}
+		if s.allowedClientIP != nil && !s.allowedClientIP.Equal(normalizeIP(addr.IP)) {
+			continue
+		}
 		destAddr, payload, err := decodeSocks5UDPRequest(buf[:n])
 		if err != nil {
 			continue
@@ -399,8 +481,12 @@ func (s *uotClientSession) pipeServerToClient() {
 func (s *uotClientSession) setClientAddr(addr *net.UDPAddr) {
 	s.clientAddrMu.Lock()
 	defer s.clientAddrMu.Unlock()
-	if s.clientAddr == nil {
-		s.clientAddr = addr
+	if addr == nil {
+		return
+	}
+	cpy := *addr
+	if s.clientAddr == nil || s.clientAddr.Port != addr.Port || !normalizeIP(s.clientAddr.IP).Equal(normalizeIP(addr.IP)) {
+		s.clientAddr = &cpy
 	}
 }
 

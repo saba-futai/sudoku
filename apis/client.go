@@ -148,7 +148,7 @@ func establishBaseConn(ctx context.Context, cfg *ProtocolConfig, validate func(*
 	// CDN-capable HTTP tunnel modes.
 	if !cfg.DisableHTTPMask {
 		switch strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMode)) {
-		case "xhttp", "pht", "auto":
+		case "stream", "poll", "auto":
 			rawConn, err := httpmask.DialTunnel(ctx, cfg.ServerAddress, httpmask.TunnelDialOptions{
 				Mode:         cfg.HTTPMaskMode,
 				TLSEnabled:   cfg.HTTPMaskTLSEnabled,
