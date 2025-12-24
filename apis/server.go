@@ -215,6 +215,35 @@ func abs(x int64) int64 {
 	return x
 }
 
+// ServerHandshakeAuto upgrades the connection and detects whether it is a UoT (UDP-over-TCP) session.
+//
+// Returns:
+//   - conn: the upgraded tunnel connection
+//   - targetAddr: valid only when isUoT=false
+//   - isUoT=true: caller should run HandleUoT(conn) instead of reading a target address
+func ServerHandshakeAuto(rawConn net.Conn, cfg *ProtocolConfig) (conn net.Conn, targetAddr string, isUoT bool, err error) {
+	conn, fail, err := serverHandshakeCore(rawConn, cfg)
+	if err != nil {
+		return nil, "", false, err
+	}
+
+	isUoT, tuned, err := DetectUoT(conn)
+	if err != nil {
+		_ = conn.Close()
+		return nil, "", false, fail(fmt.Errorf("detect uot failed: %w", err))
+	}
+	if isUoT {
+		return tuned, "", true, nil
+	}
+
+	targetAddr, _, _, err = protocol.ReadAddress(tuned)
+	if err != nil {
+		_ = tuned.Close()
+		return nil, "", false, fail(fmt.Errorf("read target address failed: %w", err))
+	}
+	return tuned, targetAddr, false, nil
+}
+
 // ServerHandshakeFlexible upgrades the connection and leaves payload parsing (address or UoT) to the caller.
 // The returned fail function wraps errors into HandshakeError with recorded data for fallback handling.
 func ServerHandshakeFlexible(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, func(error) error, error) {

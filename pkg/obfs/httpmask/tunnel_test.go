@@ -38,31 +38,31 @@ func TestCanonicalHeaderHost(t *testing.T) {
 	}
 }
 
-func TestDialTunnel_Auto_FallsBackToPHTWithFreshContext(t *testing.T) {
-	prevX := dialXHTTPFn
-	prevP := dialPHTFn
+func TestDialTunnel_Auto_FallsBackToPollWithFreshContext(t *testing.T) {
+	prevStream := dialStreamFn
+	prevPoll := dialPollFn
 	t.Cleanup(func() {
-		dialXHTTPFn = prevX
-		dialPHTFn = prevP
+		dialStreamFn = prevStream
+		dialPollFn = prevPoll
 	})
 
-	var xCalled, pCalled int
-	dialXHTTPFn = func(ctx context.Context, serverAddress string, opts TunnelDialOptions) (net.Conn, error) {
-		xCalled++
+	var streamCalled, pollCalled int
+	dialStreamFn = func(ctx context.Context, serverAddress string, opts TunnelDialOptions) (net.Conn, error) {
+		streamCalled++
 		dl, ok := ctx.Deadline()
 		if !ok {
-			t.Fatalf("xhttp ctx missing deadline")
+			t.Fatalf("stream ctx missing deadline")
 		}
 		remain := time.Until(dl)
 		if remain < 2*time.Second || remain > 4*time.Second {
-			t.Fatalf("xhttp ctx deadline not in expected range, remaining=%s", remain)
+			t.Fatalf("stream ctx deadline not in expected range, remaining=%s", remain)
 		}
-		return nil, errors.New("xhttp forced fail")
+		return nil, errors.New("stream forced fail")
 	}
 
 	var peer net.Conn
-	dialPHTFn = func(ctx context.Context, serverAddress string, opts TunnelDialOptions) (net.Conn, error) {
-		pCalled++
+	dialPollFn = func(ctx context.Context, serverAddress string, opts TunnelDialOptions) (net.Conn, error) {
+		pollCalled++
 		if ctx.Err() != nil {
 			return nil, ctx.Err()
 		}
@@ -78,12 +78,12 @@ func TestDialTunnel_Auto_FallsBackToPHTWithFreshContext(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DialTunnel(auto) error: %v", err)
 	}
-	if xCalled != 1 || pCalled != 1 {
+	if streamCalled != 1 || pollCalled != 1 {
 		_ = c.Close()
 		if peer != nil {
 			_ = peer.Close()
 		}
-		t.Fatalf("unexpected calls: xhttp=%d pht=%d", xCalled, pCalled)
+		t.Fatalf("unexpected calls: stream=%d poll=%d", streamCalled, pollCalled)
 	}
 	_ = c.Close()
 	if peer != nil {
@@ -91,11 +91,11 @@ func TestDialTunnel_Auto_FallsBackToPHTWithFreshContext(t *testing.T) {
 	}
 }
 
-func TestTunnelServer_XHTTP_SplitSession_PushPull(t *testing.T) {
+func TestTunnelServer_Stream_SplitSession_PushPull(t *testing.T) {
 	srv := NewTunnelServer(TunnelServerOptions{
-		Mode:               "xhttp",
-		PHTPullReadTimeout: 50 * time.Millisecond,
-		PHTSessionTTL:      5 * time.Second,
+		Mode:            "stream",
+		PullReadTimeout: 50 * time.Millisecond,
+		SessionTTL:      5 * time.Second,
 	})
 
 	authorize := func() (token string, stream net.Conn) {
@@ -116,7 +116,7 @@ func TestTunnelServer_XHTTP_SplitSession_PushPull(t *testing.T) {
 		_, _ = io.WriteString(client,
 			"GET /session HTTP/1.1\r\n"+
 				"Host: example.com\r\n"+
-				"X-Sudoku-Tunnel: xhttp\r\n"+
+				"X-Sudoku-Tunnel: stream\r\n"+
 				"X-Sudoku-Version: 1\r\n"+
 				"\r\n")
 		raw, _ := io.ReadAll(client)
@@ -149,7 +149,7 @@ func TestTunnelServer_XHTTP_SplitSession_PushPull(t *testing.T) {
 
 	token, stream := authorize()
 	t.Cleanup(func() {
-		srv.phtClose(token)
+		srv.sessionClose(token)
 		_ = stream.Close()
 	})
 
@@ -178,7 +178,7 @@ func TestTunnelServer_XHTTP_SplitSession_PushPull(t *testing.T) {
 		_, _ = io.WriteString(client, fmt.Sprintf(
 			"POST /api/v1/upload?token=%s HTTP/1.1\r\n"+
 				"Host: example.com\r\n"+
-				"X-Sudoku-Tunnel: xhttp\r\n"+
+				"X-Sudoku-Tunnel: stream\r\n"+
 				"X-Sudoku-Version: 1\r\n"+
 				"Content-Length: %d\r\n"+
 				"\r\n"+
@@ -208,7 +208,7 @@ func TestTunnelServer_XHTTP_SplitSession_PushPull(t *testing.T) {
 		_, _ = io.WriteString(client, fmt.Sprintf(
 			"GET /stream?token=%s HTTP/1.1\r\n"+
 				"Host: example.com\r\n"+
-				"X-Sudoku-Tunnel: xhttp\r\n"+
+				"X-Sudoku-Tunnel: stream\r\n"+
 				"X-Sudoku-Version: 1\r\n"+
 				"\r\n", token))
 

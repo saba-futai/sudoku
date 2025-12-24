@@ -45,9 +45,9 @@ func startHTTPMaskTunnelEchoServer(t testing.TB, serverCfg *apis.ProtocolConfig)
 	return ln.Addr().String(), func() { _ = ln.Close() }
 }
 
-func TestHTTPMaskTunnel_XHTTP(t *testing.T) {
+func TestHTTPMaskTunnel_Stream(t *testing.T) {
 	table := sudoku.NewTable("seed", "prefer_ascii")
-	key := "test-key-xhttp"
+	key := "test-key-stream"
 
 	serverCfg := &apis.ProtocolConfig{
 		Key:                     key,
@@ -74,7 +74,7 @@ func TestHTTPMaskTunnel_XHTTP(t *testing.T) {
 		PaddingMax:         0,
 		EnablePureDownlink: true,
 		DisableHTTPMask:    false,
-		HTTPMaskMode:       "xhttp",
+		HTTPMaskMode:       "stream",
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -99,9 +99,9 @@ func TestHTTPMaskTunnel_XHTTP(t *testing.T) {
 	}
 }
 
-func TestHTTPMaskTunnel_PHT(t *testing.T) {
+func TestHTTPMaskTunnel_Poll(t *testing.T) {
 	table := sudoku.NewTable("seed", "prefer_ascii")
-	key := "test-key-pht"
+	key := "test-key-poll"
 
 	serverCfg := &apis.ProtocolConfig{
 		Key:                     key,
@@ -128,7 +128,7 @@ func TestHTTPMaskTunnel_PHT(t *testing.T) {
 		PaddingMax:         0,
 		EnablePureDownlink: true,
 		DisableHTTPMask:    false,
-		HTTPMaskMode:       "pht",
+		HTTPMaskMode:       "poll",
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
@@ -140,7 +140,7 @@ func TestHTTPMaskTunnel_PHT(t *testing.T) {
 	}
 	defer conn.Close()
 
-	msg := []byte("hello pht")
+	msg := []byte("hello poll")
 	if _, err := conn.Write(msg); err != nil {
 		t.Fatalf("write: %v", err)
 	}
@@ -153,11 +153,11 @@ func TestHTTPMaskTunnel_PHT(t *testing.T) {
 	}
 }
 
-func TestHTTPMaskTunnel_AutoFallbackToPHT(t *testing.T) {
+func TestHTTPMaskTunnel_AutoFallbackToPoll(t *testing.T) {
 	table := sudoku.NewTable("seed", "prefer_ascii")
 	key := "test-key-auto-fallback"
 
-	// Server only enables PHT; XHTTP must fail fast so client can fall back.
+	// Server only enables poll; stream must fail fast so client can fall back.
 	serverCfg := &apis.ProtocolConfig{
 		Key:                     key,
 		AEADMethod:              "chacha20-poly1305",
@@ -167,7 +167,7 @@ func TestHTTPMaskTunnel_AutoFallbackToPHT(t *testing.T) {
 		EnablePureDownlink:      true,
 		HandshakeTimeoutSeconds: 5,
 		DisableHTTPMask:         false,
-		HTTPMaskMode:            "pht",
+		HTTPMaskMode:            "poll",
 	}
 
 	addr, stop := startHTTPMaskTunnelEchoServer(t, serverCfg)
@@ -229,8 +229,8 @@ func TestHTTPMaskTunnel_Boundary_InvalidToken(t *testing.T) {
 	}
 	defer c.Close()
 
-	// PHT pull with invalid token must be rejected.
-	io.WriteString(c, "GET /stream?token=bad HTTP/1.1\r\nHost: x\r\nX-Sudoku-Tunnel: pht\r\nX-Sudoku-Version: 1\r\n\r\n")
+	// poll pull with invalid token must be rejected.
+	io.WriteString(c, "GET /stream?token=bad HTTP/1.1\r\nHost: x\r\nX-Sudoku-Tunnel: poll\r\nX-Sudoku-Version: 1\r\n\r\n")
 	br := bufio.NewReader(c)
 	line, err := br.ReadString('\n')
 	if err != nil {
@@ -241,7 +241,7 @@ func TestHTTPMaskTunnel_Boundary_InvalidToken(t *testing.T) {
 	}
 }
 
-func TestHTTPMaskTunnel_Boundary_XHTTPBadPath(t *testing.T) {
+func TestHTTPMaskTunnel_Boundary_StreamBadPath(t *testing.T) {
 	addr, stop := startHTTPMaskTunnelEchoServer(t, &apis.ProtocolConfig{
 		Key:                     "k",
 		AEADMethod:              "chacha20-poly1305",
@@ -261,7 +261,7 @@ func TestHTTPMaskTunnel_Boundary_XHTTPBadPath(t *testing.T) {
 	}
 	defer c.Close()
 
-	io.WriteString(c, "POST /not-allowed HTTP/1.1\r\nHost: x\r\nX-Sudoku-Tunnel: xhttp\r\nX-Sudoku-Version: 1\r\n\r\n")
+	io.WriteString(c, "POST /not-allowed HTTP/1.1\r\nHost: x\r\nX-Sudoku-Tunnel: stream\r\nX-Sudoku-Version: 1\r\n\r\n")
 	br := bufio.NewReader(c)
 	line, err := br.ReadString('\n')
 	if err != nil {
@@ -301,7 +301,7 @@ func TestHTTPMaskTunnel_Stress(t *testing.T) {
 		PaddingMax:         0,
 		EnablePureDownlink: true,
 		DisableHTTPMask:    false,
-		HTTPMaskMode:       "xhttp",
+		HTTPMaskMode:       "stream",
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -327,9 +327,9 @@ func TestHTTPMaskTunnel_Stress(t *testing.T) {
 	wg.Wait()
 }
 
-func TestHTTPMaskTunnel_StressPHT(t *testing.T) {
+func TestHTTPMaskTunnel_StressPoll(t *testing.T) {
 	table := sudoku.NewTable("seed", "prefer_ascii")
-	key := "test-key-stress-pht"
+	key := "test-key-stress-poll"
 
 	serverCfg := &apis.ProtocolConfig{
 		Key:                     key,
@@ -356,7 +356,7 @@ func TestHTTPMaskTunnel_StressPHT(t *testing.T) {
 		PaddingMax:         0,
 		EnablePureDownlink: true,
 		DisableHTTPMask:    false,
-		HTTPMaskMode:       "pht",
+		HTTPMaskMode:       "poll",
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)

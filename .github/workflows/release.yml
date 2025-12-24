@@ -23,6 +23,10 @@ jobs:
           - goos: linux
             goarch: arm64
             asset_name: sudoku-linux-arm64
+          # Android
+          - goos: android
+            goarch: arm64
+            asset_name: sudoku-android-arm64
           # Windows
           - goos: windows
             goarch: amd64

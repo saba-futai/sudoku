@@ -23,13 +23,16 @@ type shortLinkPayload struct {
 	CustomTables   []string `json:"ts,omitempty"` // optional custom byte layouts (rotation)
 	// HTTP mask / tunnel controls (optional).
 	DisableHTTPMask bool   `json:"hd,omitempty"` // when true, disable HTTP mask completely
-	HTTPMaskMode    string `json:"hm,omitempty"` // "legacy" / "xhttp" / "pht" / "auto"
+	HTTPMaskMode    string `json:"hm,omitempty"` // "legacy" / "stream" / "poll" / "auto"
 	HTTPMaskTLS     bool   `json:"ht,omitempty"` // enable HTTPS explicitly (otherwise inferred by port)
 	HTTPMaskHost    string `json:"hh,omitempty"` // override HTTP Host/SNI in tunnel modes
 }
 
 // BuildShortLinkFromConfig builds a sudoku:// short link from the provided config.
-// If cfg.ServerAddress is empty (server-side config), advertiseHost must be provided.
+//
+// If cfg.ServerAddress is empty, advertiseHost can be used to provide the public host[:port].
+// For server configs, when advertiseHost is empty, we try to derive the host from fallback_address (host part)
+// and use local_port as the advertised port.
 func BuildShortLinkFromConfig(cfg *Config, advertiseHost string) (string, error) {
 	if cfg == nil {
 		return "", errors.New("nil config")
@@ -190,6 +193,18 @@ func deriveAdvertiseAddress(cfg *Config, advertiseHost string) (string, int, err
 		}
 		if cfg.LocalPort > 0 {
 			return advertiseHost, cfg.LocalPort, nil
+		}
+	}
+
+	// Best-effort fallback for server-side configs:
+	// if the user didn't provide a public host (CLI) nor server_address (config),
+	// try to reuse fallback_address's host as the advertised host.
+	//
+	// This makes `-export-link` usable with typical server configs where the fallback
+	// runs on the same machine (e.g. 127.0.0.1:80) or same public IP but different port.
+	if cfg.Mode == "server" && advertiseHost == "" && cfg.LocalPort > 0 && cfg.FallbackAddr != "" {
+		if h, _, err := net.SplitHostPort(cfg.FallbackAddr); err == nil && h != "" {
+			return h, cfg.LocalPort, nil
 		}
 	}
 

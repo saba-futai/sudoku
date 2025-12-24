@@ -73,6 +73,13 @@ go build -o sudoku ./cmd/sudoku-tunnel
 - 想要更好的下行带宽：两端都将 `enable_pure_downlink` 设为 `false`，开启带宽优化下行（需 AEAD）。
 - 分流提示：`rule_urls: ["global"]` 表示全局代理（最省心）。如需 PAC 分流，请配置规则 URL（见 `doc/README.md`），或直接用短链启动（`./sudoku -link ...`）。
 
+## 5.1（可选）过 Cloudflare CDN（小黄云）
+如需走 Cloudflare CDN/反代，请使用真实 HTTP 隧道模式（`stream` / `poll` / `auto`），不要用 `legacy`。
+
+- 服务端：`"disable_http_mask": false`，并将 `"http_mask_mode"` 设为 `"poll"`（或 `"auto"`）。
+- 客户端：同样开启 HTTP mask，并把 `"server_address"` 填成 Cloudflare 域名（例如 `"your.domain.com:443"`；也可用 Cloudflare 支持的 `8080`/`8443` 等端口）。
+- `443` 会自动走 HTTPS；如需强制 HTTPS，可设 `"http_mask_tls": true`。
+
 ## 6. 启动
 ```bash
 # 服务端
@@ -88,9 +95,11 @@ go build -o sudoku ./cmd/sudoku-tunnel
 
 ## 8. 使用/导出短链
 - 启动客户端并直接用短链：`./sudoku -link "sudoku://..."`。
-- 从配置导出短链（分享给别人）：`./sudoku -c client.json -export-link -public-host your.server.com`。
+- 从配置导出短链（分享给别人）：
+  - 客户端配置：`./sudoku -c client.json -export-link`
+  - 服务端配置：`./sudoku -c server.json -export-link -public-host 域名[:端口]`
 短链可让对方免编辑配置，直接运行即可。
-注意：短链接只支持单个 `custom_table`，不支持 `custom_tables` 多表轮换。
+提示：短链接支持 `custom_table` 以及 `custom_tables`（多表轮换），并可携带 CDN 相关的 HTTP mask 选项；如需兼容旧版本客户端，请至少保留 `custom_table`。
 
 ## 9. 常见问题速查
 - **端口占用**：更换 `local_port` 或释放冲突程序。

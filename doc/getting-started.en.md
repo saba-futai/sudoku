@@ -70,6 +70,13 @@ Tip: if you don’t have a decoy web server on `fallback_address`, set `"suspici
 - Want more downlink throughput? Set `enable_pure_downlink` to `false` on both sides to enable the packed mode (AEAD required).
 - Routing mode tip: `rule_urls: ["global"]` proxies everything (simplest). For PAC mode, provide rule URLs (see `doc/README.md`), or start from a short link (`./sudoku -link ...`).
 
+## 5.1) Optional: Cloudflare CDN (orange cloud)
+To run through Cloudflare (or other CDN/reverse-proxy), use real HTTP tunnel modes (`stream` / `poll` / `auto`). Do not use `legacy`.
+
+- Server: set `"disable_http_mask": false` and `"http_mask_mode": "poll"` (or `"auto"`).
+- Client: same, and set `"server_address": "your.domain.com:443"` (or other Cloudflare-supported HTTP(S) ports like `8080`/`8443`).
+- Port `443` implies HTTPS automatically; to force HTTPS explicitly, set `"http_mask_tls": true`.
+
 ## 6) Run
 ```bash
 # Server
@@ -85,8 +92,10 @@ Tip: if you don’t have a decoy web server on `fallback_address`, set `"suspici
 
 ## 8) Use or share a short link
 - Start the client directly from a link: `./sudoku -link "sudoku://..."`.
-- Export a link from your config to share: `./sudoku -c client.json -export-link -public-host your.server.com`.
-- Note: short links only carry a single `custom_table` and do not support `custom_tables` rotation.
+- Export a link from your config to share:
+  - client config: `./sudoku -c client.json -export-link`
+  - server config: `./sudoku -c server.json -export-link -public-host host[:port]`
+- Tip: short links support `custom_table`, `custom_tables` rotation, and CDN-related HTTP mask options; keep `custom_table` if you need to support older clients.
 
 ## 9) Quick troubleshooting
 - Port in use: change `local_port` or free the port.

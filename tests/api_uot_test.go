@@ -38,6 +38,9 @@ func TestAPIPackedDownlinkEcho(t *testing.T) {
 	serverCfg.ServerAddress = addr
 	serverCfg.TargetAddress = ""
 
+	wantTarget := "example.com:80"
+	gotTargetCh := make(chan string, 1)
+
 	go func() {
 		for {
 			conn, err := l.Accept()
@@ -46,9 +49,17 @@ func TestAPIPackedDownlinkEcho(t *testing.T) {
 			}
 			go func(c net.Conn) {
 				defer c.Close()
-				tun, _, err := apis.ServerHandshake(c, &serverCfg)
+				tun, target, isUoT, err := apis.ServerHandshakeAuto(c, &serverCfg)
 				if err != nil {
 					return
+				}
+				if isUoT {
+					_ = tun.Close()
+					return
+				}
+				select {
+				case gotTargetCh <- target:
+				default:
 				}
 				defer tun.Close()
 				io.Copy(tun, tun)
@@ -58,13 +69,22 @@ func TestAPIPackedDownlinkEcho(t *testing.T) {
 
 	clientCfg := *cfg
 	clientCfg.ServerAddress = addr
-	clientCfg.TargetAddress = "example.com:80"
+	clientCfg.TargetAddress = wantTarget
 
 	conn, err := apis.Dial(context.Background(), &clientCfg)
 	if err != nil {
 		t.Fatalf("dial failed: %v", err)
 	}
 	defer conn.Close()
+
+	select {
+	case got := <-gotTargetCh:
+		if got != wantTarget {
+			t.Fatalf("unexpected target: got %q want %q", got, wantTarget)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for server target")
+	}
 
 	msg := []byte("api packed downlink echo")
 	if _, err := conn.Write(msg); err != nil {
@@ -114,15 +134,7 @@ func TestAPIUoT(t *testing.T) {
 			}
 			go func(c net.Conn) {
 				defer c.Close()
-				tun, fail, err := apis.ServerHandshakeFlexible(c, cfg)
-				if err != nil {
-					select {
-					case errCh <- err:
-					default:
-					}
-					return
-				}
-				isUoT, tuned, err := apis.DetectUoT(tun)
+				tun, _, isUoT, err := apis.ServerHandshakeAuto(c, cfg)
 				if err != nil {
 					select {
 					case errCh <- err:
@@ -132,12 +144,12 @@ func TestAPIUoT(t *testing.T) {
 				}
 				if !isUoT {
 					select {
-					case errCh <- fail(io.ErrUnexpectedEOF):
+					case errCh <- io.ErrUnexpectedEOF:
 					default:
 					}
 					return
 				}
-				if err := apis.HandleUoT(tuned); err != nil {
+				if err := apis.HandleUoT(tun); err != nil {
 					select {
 					case errCh <- err:
 					default:

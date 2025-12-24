@@ -50,7 +50,7 @@ func (d *BaseDialer) dialBase() (net.Conn, error) {
 	// HTTP tunnel (CDN-friendly) modes. The returned conn already strips HTTP headers.
 	if !d.Config.DisableHTTPMask {
 		switch strings.ToLower(strings.TrimSpace(d.Config.HTTPMaskMode)) {
-		case "xhttp", "pht", "auto":
+		case "stream", "poll", "auto":
 			dialCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 			defer cancel()
 

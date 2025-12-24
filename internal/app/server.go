@@ -28,7 +28,7 @@ func RunServer(cfg *config.Config, tables []*sudoku.Table) {
 	var tunnelSrv *httpmask.TunnelServer
 	if !cfg.DisableHTTPMask {
 		switch strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMode)) {
-		case "xhttp", "pht", "auto":
+		case "stream", "poll", "auto":
 			tunnelSrv = httpmask.NewTunnelServer(httpmask.TunnelServerOptions{
 				Mode: cfg.HTTPMaskMode,
 			})

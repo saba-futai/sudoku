@@ -2,7 +2,7 @@ package tests
 
 import (
 	"bytes"
-	"encoding/binary"
+	"context"
 	"fmt"
 	"io"
 	"math/bits"
@@ -51,6 +51,31 @@ func getFreePorts(count int) ([]int, error) {
 		l.Close()
 	}
 	return ports, nil
+}
+
+func pickNonLoopbackIPv4() net.IP {
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		return nil
+	}
+	for _, addr := range addrs {
+		ipNet, ok := addr.(*net.IPNet)
+		if !ok || ipNet.IP == nil {
+			continue
+		}
+		ip := ipNet.IP.To4()
+		if ip == nil {
+			continue
+		}
+		if ip.IsLoopback() || ip.IsUnspecified() {
+			continue
+		}
+		if !ip.IsGlobalUnicast() {
+			continue
+		}
+		return ip
+	}
+	return nil
 }
 
 func startEchoServer(port int) error {
@@ -332,9 +357,12 @@ func startDualMiddleman(listenPort, targetPort int, upChan, downChan chan []byte
 }
 
 // SOCKS helpers for UoT tests.
-func performUDPAssociate(t *testing.T, clientPort int) (net.Conn, *net.UDPAddr) {
+func performUDPAssociate(t *testing.T, serverAddr string, dialer *net.Dialer) (net.Conn, *net.UDPAddr) {
 	t.Helper()
-	ctrl, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", clientPort))
+	if dialer == nil {
+		dialer = &net.Dialer{}
+	}
+	ctrl, err := dialer.Dial("tcp", serverAddr)
 	if err != nil {
 		t.Fatalf("Failed to connect to client control port: %v", err)
 	}
@@ -355,16 +383,43 @@ func performUDPAssociate(t *testing.T, clientPort int) (net.Conn, *net.UDPAddr) 
 		t.Fatalf("Failed to write UDP associate: %v", err)
 	}
 
-	reply := make([]byte, 10)
-	if _, err := io.ReadFull(ctrl, reply); err != nil {
-		t.Fatalf("Failed to read UDP associate reply: %v", err)
+	header := make([]byte, 3)
+	if _, err := io.ReadFull(ctrl, header); err != nil {
+		t.Fatalf("Failed to read UDP associate reply header: %v", err)
 	}
-	if reply[1] != 0x00 {
-		t.Fatalf("UDP associate rejected: %v", reply[1])
+	if header[0] != 0x05 || header[2] != 0x00 {
+		t.Fatalf("invalid UDP associate reply header: %v", header)
+	}
+	if header[1] != 0x00 {
+		t.Fatalf("UDP associate rejected: %v", header[1])
 	}
 
-	port := int(binary.BigEndian.Uint16(reply[8:10]))
-	udpAddr := &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: port}
+	addrStr, _, _, err := protocol.ReadAddress(ctrl)
+	if err != nil {
+		t.Fatalf("Failed to read UDP associate addr: %v", err)
+	}
+	udpAddr, err := net.ResolveUDPAddr("udp", addrStr)
+	if err != nil {
+		t.Fatalf("Failed to resolve UDP relay addr %q: %v", addrStr, err)
+	}
+
+	// Some SOCKS5 servers return 0.0.0.0/:: to indicate "use the TCP endpoint host".
+	if udpAddr.IP == nil || udpAddr.IP.IsUnspecified() {
+		host, _, err := net.SplitHostPort(serverAddr)
+		if err != nil {
+			t.Fatalf("invalid server addr %q: %v", serverAddr, err)
+		}
+		ip := net.ParseIP(host)
+		if ip == nil {
+			ips, lookupErr := net.DefaultResolver.LookupIP(context.Background(), "ip", host)
+			if lookupErr != nil || len(ips) == 0 {
+				t.Fatalf("resolve server host %q failed: %v", host, lookupErr)
+			}
+			ip = ips[0]
+		}
+		udpAddr.IP = ip
+	}
+
 	return ctrl, udpAddr
 }
 
@@ -625,7 +680,7 @@ func TestUDPOverTCPWithPackedDownlink(t *testing.T) {
 	}
 	startSudokuClient(clientCfg)
 
-	ctrlConn, udpRelay := performUDPAssociate(t, clientPort)
+	ctrlConn, udpRelay := performUDPAssociate(t, fmt.Sprintf("127.0.0.1:%d", clientPort), nil)
 	defer ctrlConn.Close()
 
 	relayConn, err := net.DialUDP("udp", nil, udpRelay)
@@ -654,6 +709,197 @@ func TestUDPOverTCPWithPackedDownlink(t *testing.T) {
 	}
 	if !bytes.Equal(data, payload) {
 		t.Fatalf("unexpected udp payload size=%d", len(data))
+	}
+}
+
+func TestUDPOverTCP_UDPAssociate_RemoteAddressAndIPFilter(t *testing.T) {
+	ports, _ := getFreePorts(3)
+	serverPort := ports[0]
+	middlemanPort := ports[1]
+	clientPort := ports[2]
+
+	udpConn, udpPortReal, err := startUDPEchoServer()
+	if err != nil {
+		t.Fatalf("failed to start udp echo: %v", err)
+	}
+	defer udpConn.Close()
+
+	serverCfg := &config.Config{
+		Mode:               "server",
+		LocalPort:          serverPort,
+		Key:                "testkey",
+		AEAD:               "aes-128-gcm",
+		ASCII:              "prefer_entropy",
+		EnablePureDownlink: true,
+		FallbackAddr:       "127.0.0.1:80",
+	}
+	startSudokuServer(serverCfg)
+	startDualMiddleman(middlemanPort, serverPort, nil, nil)
+
+	clientCfg := &config.Config{
+		Mode:               "client",
+		LocalPort:          clientPort,
+		ServerAddress:      fmt.Sprintf("127.0.0.1:%d", middlemanPort),
+		Key:                "testkey",
+		AEAD:               "aes-128-gcm",
+		ASCII:              "prefer_entropy",
+		EnablePureDownlink: true,
+		ProxyMode:          "global",
+	}
+	startSudokuClient(clientCfg)
+
+	// Connect via a non-loopback local interface so the UDP relay must not be stuck on 127.0.0.1.
+	hostIP := pickNonLoopbackIPv4()
+	if hostIP == nil {
+		t.Skip("no non-loopback IPv4 address found")
+	}
+	serverAddr := net.JoinHostPort(hostIP.String(), fmt.Sprintf("%d", clientPort))
+	ctrlConn, udpRelay := performUDPAssociate(t, serverAddr, nil)
+	defer ctrlConn.Close()
+
+	if got := udpRelay.IP.String(); got != hostIP.String() {
+		t.Fatalf("unexpected udp relay ip: got %s want %s", got, hostIP.String())
+	}
+
+	targetAddr := fmt.Sprintf("127.0.0.1:%d", udpPortReal)
+
+	// Allowed client IP (hostIP) should work.
+	relayConn, err := net.DialUDP("udp", &net.UDPAddr{IP: hostIP, Port: 0}, udpRelay)
+	if err != nil {
+		t.Fatalf("failed to dial udp relay: %v", err)
+	}
+	defer relayConn.Close()
+
+	payload := bytes.Repeat([]byte{0xCD}, 1024)
+	packet := buildSocksUDPRequest(t, targetAddr, payload)
+	if _, err := relayConn.Write(packet); err != nil {
+		t.Fatalf("failed to send udp packet: %v", err)
+	}
+
+	respBuf := make([]byte, len(payload)+64)
+	_ = relayConn.SetReadDeadline(time.Now().Add(3 * time.Second))
+	n, err := relayConn.Read(respBuf)
+	if err != nil {
+		t.Fatalf("failed to read udp response: %v", err)
+	}
+	addr, data := parseSocksUDPResponse(t, respBuf[:n])
+	if addr != targetAddr {
+		t.Fatalf("unexpected response addr: %s", addr)
+	}
+	if !bytes.Equal(data, payload) {
+		t.Fatalf("unexpected udp payload size=%d", len(data))
+	}
+
+	// Boundary: FRAG!=0 must be ignored, but must not break the session.
+	{
+		bad := &bytes.Buffer{}
+		bad.Write([]byte{0x00, 0x00, 0x01}) // FRAG=1 (unsupported)
+		if err := protocol.WriteAddress(bad, targetAddr); err != nil {
+			t.Fatalf("failed to encode addr: %v", err)
+		}
+		bad.Write([]byte("bad-frag"))
+		_, _ = relayConn.Write(bad.Bytes())
+		_ = relayConn.SetReadDeadline(time.Now().Add(250 * time.Millisecond))
+		if _, err := relayConn.Read(make([]byte, 1024)); err == nil {
+			t.Fatalf("expected no response for fragmented packet")
+		}
+
+		packet2 := buildSocksUDPRequest(t, targetAddr, []byte("ok"))
+		if _, err := relayConn.Write(packet2); err != nil {
+			t.Fatalf("failed to send follow-up packet: %v", err)
+		}
+		_ = relayConn.SetReadDeadline(time.Now().Add(3 * time.Second))
+		if _, err := relayConn.Read(respBuf); err != nil {
+			t.Fatalf("failed to read follow-up response: %v", err)
+		}
+	}
+
+	// A different source IP must be ignored (no open relay / no hijack).
+	badConn, err := net.DialUDP("udp", &net.UDPAddr{IP: net.ParseIP("127.0.0.1"), Port: 0}, udpRelay)
+	if err != nil {
+		t.Fatalf("failed to dial udp relay from bad ip: %v", err)
+	}
+	defer badConn.Close()
+	_, _ = badConn.Write(packet)
+	_ = badConn.SetReadDeadline(time.Now().Add(250 * time.Millisecond))
+	if _, err := badConn.Read(make([]byte, 1024)); err == nil {
+		t.Fatalf("expected bad udp client to be ignored, but got a response")
+	}
+}
+
+func TestUDPOverTCP_Stress_ManyDatagrams(t *testing.T) {
+	ports, _ := getFreePorts(3)
+	serverPort := ports[0]
+	middlemanPort := ports[1]
+	clientPort := ports[2]
+
+	udpConn, udpPortReal, err := startUDPEchoServer()
+	if err != nil {
+		t.Fatalf("failed to start udp echo: %v", err)
+	}
+	defer udpConn.Close()
+
+	serverCfg := &config.Config{
+		Mode:               "server",
+		LocalPort:          serverPort,
+		Key:                "stress-key",
+		AEAD:               "chacha20-poly1305",
+		ASCII:              "prefer_ascii",
+		EnablePureDownlink: true,
+		FallbackAddr:       "127.0.0.1:80",
+		PaddingMin:         5,
+		PaddingMax:         20,
+	}
+	startSudokuServer(serverCfg)
+	startDualMiddleman(middlemanPort, serverPort, nil, nil)
+
+	clientCfg := &config.Config{
+		Mode:               "client",
+		LocalPort:          clientPort,
+		ServerAddress:      fmt.Sprintf("127.0.0.1:%d", middlemanPort),
+		Key:                "stress-key",
+		AEAD:               "chacha20-poly1305",
+		ASCII:              "prefer_ascii",
+		EnablePureDownlink: true,
+		ProxyMode:          "global",
+		PaddingMin:         5,
+		PaddingMax:         20,
+	}
+	startSudokuClient(clientCfg)
+
+	ctrlConn, udpRelay := performUDPAssociate(t, fmt.Sprintf("127.0.0.1:%d", clientPort), nil)
+	defer ctrlConn.Close()
+
+	relayConn, err := net.DialUDP("udp", nil, udpRelay)
+	if err != nil {
+		t.Fatalf("failed to dial udp relay: %v", err)
+	}
+	defer relayConn.Close()
+
+	targetAddr := fmt.Sprintf("127.0.0.1:%d", udpPortReal)
+	respBuf := make([]byte, 70*1024)
+
+	// Exercise a lot of datagrams with varying sizes.
+	for i := 0; i < 200; i++ {
+		size := 32 + (i % 8192)
+		payload := bytes.Repeat([]byte{byte(i)}, size)
+		packet := buildSocksUDPRequest(t, targetAddr, payload)
+		if _, err := relayConn.Write(packet); err != nil {
+			t.Fatalf("write #%d failed: %v", i, err)
+		}
+
+		_ = relayConn.SetReadDeadline(time.Now().Add(3 * time.Second))
+		n, err := relayConn.Read(respBuf)
+		if err != nil {
+			t.Fatalf("read #%d failed: %v", i, err)
+		}
+		addr, data := parseSocksUDPResponse(t, respBuf[:n])
+		if addr != targetAddr {
+			t.Fatalf("resp #%d addr mismatch: %s", i, addr)
+		}
+		if !bytes.Equal(data, payload) {
+			t.Fatalf("resp #%d payload mismatch: got=%d want=%d", i, len(data), len(payload))
+		}
 	}
 }
 
