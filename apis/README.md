@@ -98,13 +98,15 @@ func main() {
 		go func(c net.Conn) {
 			defer c.Close()
 
-			tunnel, target, err := apis.ServerHandshake(c, cfg)
+			tunnel, target, userHash, err := apis.ServerHandshakeWithUserHash(c, cfg)
 			if err != nil {
 				// 握手失败时可按需 fallback；HandshakeError 携带已读数据
 				log.Println("handshake:", err)
 				return
 			}
 			defer tunnel.Close()
+
+			_ = userHash // hex(sha256(privateKey)[1:8]) for official split-key clients
 
 			up, err := net.Dial("tcp", target)
 			if err != nil {

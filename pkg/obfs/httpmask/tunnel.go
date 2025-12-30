@@ -57,7 +57,7 @@ const (
 
 type TunnelDialOptions struct {
 	Mode         string
-	TLSEnabled   bool   // if false, scheme is auto-inferred from port (443 => https)
+	TLSEnabled   bool   // when true, use HTTPS; when false, use HTTP (no port-based inference)
 	HostOverride string // optional Host header / SNI host (without scheme); port inferred from ServerAddress
 }
 
@@ -921,7 +921,7 @@ func normalizeHTTPDialTarget(serverAddress string, tlsEnabled bool, hostOverride
 		urlHost = net.JoinHostPort(host, port)
 	}
 
-	if tlsEnabled || port == "443" {
+	if tlsEnabled {
 		scheme = "https"
 	} else {
 		scheme = "http"

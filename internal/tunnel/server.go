@@ -3,6 +3,7 @@ package tunnel
 import (
 	"bufio"
 	"bytes"
+	"encoding/hex"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -110,6 +111,22 @@ func (e *SuspiciousError) Error() string {
 // HandshakeAndUpgrade wraps the raw connection with Sudoku/Crypto and performs handshake.
 func HandshakeAndUpgrade(rawConn net.Conn, cfg *config.Config, table *sudoku.Table) (net.Conn, error) {
 	return HandshakeAndUpgradeWithTables(rawConn, cfg, []*sudoku.Table{table})
+}
+
+// HandshakeMeta carries optional, per-connection identity hints extracted from the client handshake.
+//
+// UserHash is a hex-encoded 7-byte value derived from the client's private key (when the client uses one):
+// sha256(privateKey)[1:8]. For clients without a private key, it is derived from the handshake nonce bytes.
+type HandshakeMeta struct {
+	UserHash string
+}
+
+func userHashFromHandshake(handshakeBuf []byte) string {
+	if len(handshakeBuf) < 16 {
+		return ""
+	}
+	// handshake[8] may be a table ID in some clients; use [9:16] as "hash1:8".
+	return hex.EncodeToString(handshakeBuf[9:16])
 }
 
 type recordedConn struct {
@@ -250,6 +267,13 @@ func selectTableByProbe(r *bufio.Reader, cfg *config.Config, tables []*sudoku.Ta
 // HandshakeAndUpgradeWithTables performs the handshake by probing one of multiple tables.
 // This enables per-connection table rotation without adding a plaintext table selector.
 func HandshakeAndUpgradeWithTables(rawConn net.Conn, cfg *config.Config, tables []*sudoku.Table) (net.Conn, error) {
+	conn, _, err := HandshakeAndUpgradeWithTablesMeta(rawConn, cfg, tables)
+	return conn, err
+}
+
+// HandshakeAndUpgradeWithTablesMeta is like HandshakeAndUpgradeWithTables but also returns handshake metadata
+// that can be used for multi-user accounting (e.g., per-split-private-key identification).
+func HandshakeAndUpgradeWithTablesMeta(rawConn net.Conn, cfg *config.Config, tables []*sudoku.Table) (net.Conn, *HandshakeMeta, error) {
 	// 0. HTTP Header Check
 	bufReader := bufio.NewReader(rawConn)
 	rawConn.SetReadDeadline(time.Now().Add(HandshakeTimeout))
@@ -279,14 +303,14 @@ func HandshakeAndUpgradeWithTables(rawConn net.Conn, cfg *config.Config, tables 
 				r:        bufReader,
 				recorder: recorder,
 			}
-			return nil, &SuspiciousError{Err: fmt.Errorf("invalid http header: %w", err), Conn: badConn}
+			return nil, nil, &SuspiciousError{Err: fmt.Errorf("invalid http header: %w", err), Conn: badConn}
 		}
 	}
 
 	// 1. Sudoku Layer
 	if !cfg.EnablePureDownlink && cfg.AEAD == "none" {
 		rawConn.SetReadDeadline(time.Time{})
-		return nil, fmt.Errorf("enable_pure_downlink=false requires AEAD")
+		return nil, nil, fmt.Errorf("enable_pure_downlink=false requires AEAD")
 	}
 
 	selectedTable, preRead, err := selectTableByProbe(bufReader, cfg, tables)
@@ -295,7 +319,7 @@ func HandshakeAndUpgradeWithTables(rawConn net.Conn, cfg *config.Config, tables 
 		combined := make([]byte, 0, len(httpHeaderData)+len(preRead))
 		combined = append(combined, httpHeaderData...)
 		combined = append(combined, preRead...)
-		return nil, &SuspiciousError{Err: err, Conn: &recordedConn{Conn: rawConn, recorded: combined}}
+		return nil, nil, &SuspiciousError{Err: err, Conn: &recordedConn{Conn: rawConn, recorded: combined}}
 	}
 
 	baseConn := NewPreBufferedConn(rawConn, preRead)
@@ -304,7 +328,7 @@ func HandshakeAndUpgradeWithTables(rawConn net.Conn, cfg *config.Config, tables 
 	// 2. Crypto Layer
 	cConn, err := crypto.NewAEADConn(obfsConn, cfg.Key, cfg.AEAD)
 	if err != nil {
-		return nil, fmt.Errorf("crypto setup failed: %w", err)
+		return nil, nil, fmt.Errorf("crypto setup failed: %w", err)
 	}
 
 	// 3. Handshake
@@ -313,28 +337,29 @@ func HandshakeAndUpgradeWithTables(rawConn net.Conn, cfg *config.Config, tables 
 	_, err = io.ReadFull(cConn, handshakeBuf)
 	if err != nil {
 		rawConn.SetReadDeadline(time.Time{})
-		return nil, &SuspiciousError{Err: fmt.Errorf("handshake read failed: %w", err), Conn: &prefixedRecorderConn{Conn: sConn, prefix: httpHeaderData}}
+		return nil, nil, &SuspiciousError{Err: fmt.Errorf("handshake read failed: %w", err), Conn: &prefixedRecorderConn{Conn: sConn, prefix: httpHeaderData}}
 	}
 
 	ts := int64(binary.BigEndian.Uint64(handshakeBuf[:8]))
 	if abs(time.Now().Unix()-ts) > 60 {
 		rawConn.SetReadDeadline(time.Time{})
-		return nil, &SuspiciousError{Err: fmt.Errorf("time skew/replay"), Conn: &prefixedRecorderConn{Conn: sConn, prefix: httpHeaderData}}
+		return nil, nil, &SuspiciousError{Err: fmt.Errorf("time skew/replay"), Conn: &prefixedRecorderConn{Conn: sConn, prefix: httpHeaderData}}
 	}
+	meta := &HandshakeMeta{UserHash: userHashFromHandshake(handshakeBuf)}
 
 	// 4. Downlink mode negotiation
 	modeBuf := make([]byte, 1)
 	if _, err := io.ReadFull(cConn, modeBuf); err != nil {
 		rawConn.SetReadDeadline(time.Time{})
-		return nil, &SuspiciousError{Err: fmt.Errorf("read downlink mode failed: %w", err), Conn: &prefixedRecorderConn{Conn: sConn, prefix: httpHeaderData}}
+		return nil, nil, &SuspiciousError{Err: fmt.Errorf("read downlink mode failed: %w", err), Conn: &prefixedRecorderConn{Conn: sConn, prefix: httpHeaderData}}
 	}
 	rawConn.SetReadDeadline(time.Time{})
 	if modeBuf[0] != downlinkModeByte(cfg) {
-		return nil, &SuspiciousError{Err: fmt.Errorf("downlink mode mismatch: client=%d server=%d", modeBuf[0], downlinkModeByte(cfg)), Conn: &prefixedRecorderConn{Conn: sConn, prefix: httpHeaderData}}
+		return nil, nil, &SuspiciousError{Err: fmt.Errorf("downlink mode mismatch: client=%d server=%d", modeBuf[0], downlinkModeByte(cfg)), Conn: &prefixedRecorderConn{Conn: sConn, prefix: httpHeaderData}}
 	}
 
 	sConn.StopRecording()
-	return cConn, nil
+	return cConn, meta, nil
 }
 
 func abs(x int64) int64 {

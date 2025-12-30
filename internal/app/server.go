@@ -74,7 +74,7 @@ func handleServerConn(rawConn net.Conn, cfg *config.Config, tables []*sudoku.Tab
 
 func handleSudokuServerConn(handshakeConn net.Conn, rawConn net.Conn, cfg *config.Config, tables []*sudoku.Table, allowFallback bool) {
 	// Use Tunnel Abstraction for Handshake and Upgrade
-	tunnelConn, err := tunnel.HandshakeAndUpgradeWithTables(handshakeConn, cfg, tables)
+	tunnelConn, meta, err := tunnel.HandshakeAndUpgradeWithTablesMeta(handshakeConn, cfg, tables)
 	if err != nil {
 		if suspErr, ok := err.(*tunnel.SuspiciousError); ok {
 			log.Printf("[Security] Suspicious connection: %v", suspErr.Err)
@@ -91,6 +91,11 @@ func handleSudokuServerConn(handshakeConn net.Conn, rawConn net.Conn, cfg *confi
 		return
 	}
 
+	userHash := ""
+	if meta != nil {
+		userHash = meta.UserHash
+	}
+
 	// ==========================================
 	// 5. 连接目标地址
 	// ==========================================
@@ -103,6 +108,9 @@ func handleSudokuServerConn(handshakeConn net.Conn, rawConn net.Conn, cfg *confi
 	}
 
 	if firstByte[0] == tunnel.UoTMagicByte {
+		if userHash != "" {
+			log.Printf("[Server][UoT][User:%s] session start", userHash)
+		}
 		if err := tunnel.HandleUoTServer(tunnelConn); err != nil {
 			log.Printf("[Server][UoT] session ended: %v", err)
 		}
@@ -119,7 +127,11 @@ func handleSudokuServerConn(handshakeConn net.Conn, rawConn net.Conn, cfg *confi
 		return
 	}
 
-	log.Printf("[Server] Connecting to %s", destAddrStr)
+	if userHash != "" {
+		log.Printf("[Server][User:%s] Connecting to %s", userHash, destAddrStr)
+	} else {
+		log.Printf("[Server] Connecting to %s", destAddrStr)
+	}
 
 	target, err := net.DialTimeout("tcp", destAddrStr, 10*time.Second)
 	if err != nil {

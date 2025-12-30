@@ -25,8 +25,8 @@ type Config struct {
 	//   - "poll": plain HTTP tunnel (authorize/push/pull), strong restricted-network pass-through
 	//   - "auto": try stream then fall back to poll
 	HTTPMaskMode string `json:"http_mask_mode"`
-	// HTTPMaskTLS enables HTTPS for HTTP tunnel modes (client-side). If unset/false, the default is auto-inferred
-	// from server port (443 => HTTPS, otherwise HTTP).
+	// HTTPMaskTLS enables HTTPS for HTTP tunnel modes (client-side).
+	// When false, HTTP tunnel modes use plain HTTP (no port-based TLS inference).
 	HTTPMaskTLS bool `json:"http_mask_tls"`
 	// HTTPMaskHost optionally overrides the HTTP Host header / SNI host for HTTP tunnel modes (client-side).
 	// When empty, it is derived from ServerAddress.

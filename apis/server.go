@@ -22,6 +22,7 @@ package apis
 import (
 	"bufio"
 	"bytes"
+	"encoding/hex"
 	"encoding/binary"
 	"errors"
 	"fmt"
@@ -186,26 +187,33 @@ func selectTableByProbe(r *bufio.Reader, cfg *ProtocolConfig, tables []*sudoku.T
 //
 // 任何层次失败都会返回 HandshakeError，其中包含该层及之前所有层读取的数据
 func ServerHandshake(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, string, error) {
+	conn, targetAddr, _, err := ServerHandshakeWithUserHash(rawConn, cfg)
+	return conn, targetAddr, err
+}
+
+// ServerHandshakeWithUserHash is like ServerHandshake but also returns a stable per-user identifier extracted
+// from the client handshake: hex(sha256(privateKey)[1:8]) for official clients using split private keys.
+func ServerHandshakeWithUserHash(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, string, string, error) {
 	if cfg == nil {
-		return nil, "", fmt.Errorf("config is required")
+		return nil, "", "", fmt.Errorf("config is required")
 	}
 	if err := cfg.Validate(); err != nil {
-		return nil, "", fmt.Errorf("invalid config: %w", err)
+		return nil, "", "", fmt.Errorf("invalid config: %w", err)
 	}
 
-	conn, fail, err := serverHandshakeCore(rawConn, cfg)
+	conn, userHash, fail, err := serverHandshakeCoreWithUserHash(rawConn, cfg)
 	if err != nil {
-		return nil, "", err
+		return nil, "", "", err
 	}
 
 	// 4. 读取目标地址
 	targetAddr, _, _, err := protocol.ReadAddress(conn)
 	if err != nil {
-		conn.Close()
-		return nil, "", fail(fmt.Errorf("read target address failed: %w", err))
+		_ = conn.Close()
+		return nil, "", "", fail(fmt.Errorf("read target address failed: %w", err))
 	}
 
-	return conn, targetAddr, nil
+	return conn, targetAddr, userHash, nil
 }
 
 func abs(x int64) int64 {
@@ -222,7 +230,7 @@ func abs(x int64) int64 {
 //   - targetAddr: valid only when isUoT=false
 //   - isUoT=true: caller should run HandleUoT(conn) instead of reading a target address
 func ServerHandshakeAuto(rawConn net.Conn, cfg *ProtocolConfig) (conn net.Conn, targetAddr string, isUoT bool, err error) {
-	conn, fail, err := serverHandshakeCore(rawConn, cfg)
+	conn, _, fail, err := serverHandshakeCoreWithUserHash(rawConn, cfg)
 	if err != nil {
 		return nil, "", false, err
 	}
@@ -244,18 +252,60 @@ func ServerHandshakeAuto(rawConn net.Conn, cfg *ProtocolConfig) (conn net.Conn, 
 	return tuned, targetAddr, false, nil
 }
 
+// ServerHandshakeAutoWithUserHash is like ServerHandshakeAuto but also returns the per-user handshake identifier.
+func ServerHandshakeAutoWithUserHash(rawConn net.Conn, cfg *ProtocolConfig) (conn net.Conn, targetAddr string, isUoT bool, userHash string, err error) {
+	conn, userHash, fail, err := serverHandshakeCoreWithUserHash(rawConn, cfg)
+	if err != nil {
+		return nil, "", false, "", err
+	}
+
+	isUoT, tuned, err := DetectUoT(conn)
+	if err != nil {
+		_ = conn.Close()
+		return nil, "", false, "", fail(fmt.Errorf("detect uot failed: %w", err))
+	}
+	if isUoT {
+		return tuned, "", true, userHash, nil
+	}
+
+	targetAddr, _, _, err = protocol.ReadAddress(tuned)
+	if err != nil {
+		_ = tuned.Close()
+		return nil, "", false, "", fail(fmt.Errorf("read target address failed: %w", err))
+	}
+	return tuned, targetAddr, false, userHash, nil
+}
+
 // ServerHandshakeFlexible upgrades the connection and leaves payload parsing (address or UoT) to the caller.
 // The returned fail function wraps errors into HandshakeError with recorded data for fallback handling.
 func ServerHandshakeFlexible(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, func(error) error, error) {
 	return serverHandshakeCore(rawConn, cfg)
 }
 
+// ServerHandshakeFlexibleWithUserHash is like ServerHandshakeFlexible but also returns the per-user handshake identifier.
+func ServerHandshakeFlexibleWithUserHash(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, string, func(error) error, error) {
+	return serverHandshakeCoreWithUserHash(rawConn, cfg)
+}
+
+func userHashFromHandshake(handshakeBuf []byte) string {
+	if len(handshakeBuf) < 16 {
+		return ""
+	}
+	// handshake[8] may be a table ID in some clients; use [9:16] as "hash1:8".
+	return hex.EncodeToString(handshakeBuf[9:16])
+}
+
 func serverHandshakeCore(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, func(error) error, error) {
+	conn, _, fail, err := serverHandshakeCoreWithUserHash(rawConn, cfg)
+	return conn, fail, err
+}
+
+func serverHandshakeCoreWithUserHash(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, string, func(error) error, error) {
 	if cfg == nil {
-		return nil, nil, fmt.Errorf("config is required")
+		return nil, "", nil, fmt.Errorf("config is required")
 	}
 	if err := cfg.Validate(); err != nil {
-		return nil, nil, fmt.Errorf("invalid config: %w", err)
+		return nil, "", nil, fmt.Errorf("invalid config: %w", err)
 	}
 
 	deadline := time.Now().Add(time.Duration(cfg.HandshakeTimeoutSeconds) * time.Second)
@@ -276,7 +326,7 @@ func serverHandshakeCore(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, func(
 		httpHeaderData, err = httpmask.ConsumeHeader(bufReader)
 		if err != nil {
 			rawConn.SetReadDeadline(time.Time{})
-			return nil, nil, &HandshakeError{
+			return nil, "", nil, &HandshakeError{
 				Err:            fmt.Errorf("invalid http header: %w", err),
 				RawConn:        rawConn,
 				HTTPHeaderData: httpHeaderData,
@@ -289,7 +339,7 @@ func serverHandshakeCore(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, func(
 	selectedTable, preRead, err := selectTableByProbe(bufReader, cfg, tables)
 	if err != nil {
 		rawConn.SetReadDeadline(time.Time{})
-		return nil, nil, &HandshakeError{
+		return nil, "", nil, &HandshakeError{
 			Err:            err,
 			RawConn:        rawConn,
 			HTTPHeaderData: httpHeaderData,
@@ -314,34 +364,35 @@ func serverHandshakeCore(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, func(
 
 	cConn, err := crypto.NewAEADConn(obfsConn, cfg.Key, cfg.AEADMethod)
 	if err != nil {
-		return nil, nil, fail(fmt.Errorf("crypto setup failed: %w", err))
+		return nil, "", nil, fail(fmt.Errorf("crypto setup failed: %w", err))
 	}
 
 	handshakeBuf := make([]byte, 16)
 	if _, err := io.ReadFull(cConn, handshakeBuf); err != nil {
 		cConn.Close()
-		return nil, nil, fail(fmt.Errorf("read handshake failed: %w", err))
+		return nil, "", nil, fail(fmt.Errorf("read handshake failed: %w", err))
 	}
 
 	ts := int64(binary.BigEndian.Uint64(handshakeBuf[:8]))
 	now := time.Now().Unix()
 	if abs(now-ts) > 60 {
 		cConn.Close()
-		return nil, nil, fail(fmt.Errorf("timestamp skew/replay detected: server_time=%d client_time=%d", now, ts))
+		return nil, "", nil, fail(fmt.Errorf("timestamp skew/replay detected: server_time=%d client_time=%d", now, ts))
 	}
+	userHash := userHashFromHandshake(handshakeBuf)
 
 	sConn.StopRecording()
 
 	modeBuf := []byte{0}
 	if _, err := io.ReadFull(cConn, modeBuf); err != nil {
 		cConn.Close()
-		return nil, nil, fail(fmt.Errorf("read downlink mode failed: %w", err))
+		return nil, "", nil, fail(fmt.Errorf("read downlink mode failed: %w", err))
 	}
 	if modeBuf[0] != downlinkMode(cfg) {
 		cConn.Close()
-		return nil, nil, fail(fmt.Errorf("downlink mode mismatch: client=%d server=%d", modeBuf[0], downlinkMode(cfg)))
+		return nil, "", nil, fail(fmt.Errorf("downlink mode mismatch: client=%d server=%d", modeBuf[0], downlinkMode(cfg)))
 	}
 
 	rawConn.SetReadDeadline(time.Time{})
-	return cConn, fail, nil
+	return cConn, userHash, fail, nil
 }

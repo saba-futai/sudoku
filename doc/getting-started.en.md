@@ -75,7 +75,7 @@ To run through Cloudflare (or other CDN/reverse-proxy), use real HTTP tunnel mod
 
 - Server: set `"disable_http_mask": false` and `"http_mask_mode": "poll"` (or `"auto"`).
 - Client: same, and set `"server_address": "your.domain.com:443"` (or other Cloudflare-supported HTTP(S) ports like `8080`/`8443`).
-- Port `443` implies HTTPS automatically; to force HTTPS explicitly, set `"http_mask_tls": true`.
+- Set `"http_mask_tls": true` to use HTTPS (no port-based inference).
 
 ## 6) Run
 ```bash

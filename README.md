@@ -105,7 +105,7 @@ Change `mode` to `client`, set `server_address` to the Server IP, set `local_por
 To run behind a CDN/proxy (e.g., Cloudflare orange-cloud), set:
 - `"disable_http_mask": false`
 - `"http_mask_mode": "auto"` (or `"stream"` / `"poll"`)
-- client-side `server_address` can be a domain (e.g., `"example.com:443"`); HTTPS is auto-inferred for port `443` (or force via `"http_mask_tls": true`).
+- client-side `server_address` can be a domain (e.g., `"example.com:443"`); set `"http_mask_tls": true` to use HTTPS (no port-based inference).
 
 **Note**: The Key must be generated specifically by Sudoku.
 

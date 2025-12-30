@@ -1,6 +1,8 @@
 package tunnel
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"io"
 	"net"
 	"sync"
@@ -26,6 +28,11 @@ func TestSudokuTunnel_Standard(t *testing.T) {
 		EnablePureDownlink: true,
 	}
 	table := sudoku.NewTable(cfg.Key, cfg.ASCII)
+	privateKey := []byte("test-private-key-for-user-hash")
+	wantUserHash := func() string {
+		h := sha256.Sum256(privateKey)
+		return hex.EncodeToString(h[1:8])
+	}()
 
 	// 2. Start Mock Server
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -46,12 +53,20 @@ func TestSudokuTunnel_Standard(t *testing.T) {
 			go func(c net.Conn) {
 				defer c.Close()
 				// Handshake
-				sConn, err := HandshakeAndUpgrade(c, cfg, table)
+				sConn, meta, err := HandshakeAndUpgradeWithTablesMeta(c, cfg, []*sudoku.Table{table})
 				if err != nil {
 					t.Errorf("Server handshake failed: %v", err)
 					return
 				}
 				defer sConn.Close()
+				if meta == nil {
+					t.Errorf("missing handshake meta")
+					return
+				}
+				if meta.UserHash != wantUserHash {
+					t.Errorf("unexpected user hash: got %q want %q", meta.UserHash, wantUserHash)
+					return
+				}
 
 				// Read Target Address (Standard Mode)
 				target, _, _, err := protocol.ReadAddress(sConn)
@@ -75,6 +90,8 @@ func TestSudokuTunnel_Standard(t *testing.T) {
 		BaseDialer: BaseDialer{
 			Config: cfg,
 			Tables: []*sudoku.Table{table},
+			// The official client sends sha256(privateKey)[1:8] in the handshake nonce for multi-user ID.
+			PrivateKey: privateKey,
 		},
 	}
 

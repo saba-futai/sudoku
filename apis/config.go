@@ -111,8 +111,8 @@ type ProtocolConfig struct {
 	//   - "auto": try stream then fall back to poll
 	HTTPMaskMode string
 
-	// HTTPMaskTLSEnabled enables HTTPS for HTTP tunnel modes (client-side). If false, the default is auto-inferred
-	// from ServerAddress port (443 => HTTPS, otherwise HTTP).
+	// HTTPMaskTLSEnabled enables HTTPS for HTTP tunnel modes (client-side).
+	// When false, HTTP tunnel modes use plain HTTP (no port-based TLS inference).
 	HTTPMaskTLSEnabled bool
 
 	// HTTPMaskHost optionally overrides the HTTP Host header / SNI host for HTTP tunnel modes (client-side).

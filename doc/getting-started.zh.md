@@ -78,7 +78,7 @@ go build -o sudoku ./cmd/sudoku-tunnel
 
 - 服务端：`"disable_http_mask": false`，并将 `"http_mask_mode"` 设为 `"poll"`（或 `"auto"`）。
 - 客户端：同样开启 HTTP mask，并把 `"server_address"` 填成 Cloudflare 域名（例如 `"your.domain.com:443"`；也可用 Cloudflare 支持的 `8080`/`8443` 等端口）。
-- `443` 会自动走 HTTPS；如需强制 HTTPS，可设 `"http_mask_tls": true`。
+- 如需走 HTTPS，请显式设置 `"http_mask_tls": true`（不再按端口自动推断）。
 
 ## 6. 启动
 ```bash

@@ -90,7 +90,7 @@ Sudoku can run through a CDN/proxy only in real HTTP tunnel modes: `stream` / `p
 
 - Server: set `"disable_http_mask": false` and `"http_mask_mode": "poll"` (or `"auto"`).
 - Client: same, and set `"server_address": "your.domain.com:443"` (or other Cloudflare-supported HTTP(S) ports like `8080`/`8443`).
-- HTTPS to the CDN edge is inferred by port (`443` => HTTPS). To force HTTPS explicitly, set `"http_mask_tls": true`.
+- Set `"http_mask_tls": true` to use HTTPS to the CDN edge (no port-based inference).
 
 Notes:
 - Cloudflare SSL mode `Flexible` is the simplest (Cloudflare → origin uses HTTP). For end-to-end TLS to your origin, use `Full (strict)` + a TLS terminator/reverse-proxy in front of Sudoku.
@@ -226,7 +226,7 @@ Sudoku 只有在真实 HTTP 隧道模式下才能过 CDN/代理：`stream` / `po
 
 - 服务端：`"disable_http_mask": false`，并将 `"http_mask_mode"` 设为 `"poll"`（或 `"auto"`）。
 - 客户端：同样开启 HTTP mask，并将 `"server_address"` 填成 Cloudflare 域名（如 `"your.domain.com:443"`；也可用 Cloudflare 支持的 `8080`/`8443` 等端口）。
-- 端口 `443` 会自动使用 HTTPS；如需强制 HTTPS，可设 `"http_mask_tls": true`。
+- 如需使用 HTTPS，请显式设置 `"http_mask_tls": true`（不再按端口自动推断）。
 
 提示：
 - Cloudflare 的 SSL 模式选 `Flexible` 最省事（Cloudflare → 源站走 HTTP）。如需源站也走 TLS，请用 `Full (strict)` 并在 Sudoku 前面加一层 TLS 终止/反代。

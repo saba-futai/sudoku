@@ -24,7 +24,7 @@ type shortLinkPayload struct {
 	// HTTP mask / tunnel controls (optional).
 	DisableHTTPMask bool   `json:"hd,omitempty"` // when true, disable HTTP mask completely
 	HTTPMaskMode    string `json:"hm,omitempty"` // "legacy" / "stream" / "poll" / "auto"
-	HTTPMaskTLS     bool   `json:"ht,omitempty"` // enable HTTPS explicitly (otherwise inferred by port)
+	HTTPMaskTLS     bool   `json:"ht,omitempty"` // enable HTTPS (when false/omitted, use plain HTTP)
 	HTTPMaskHost    string `json:"hh,omitempty"` // override HTTP Host/SNI in tunnel modes
 }
 

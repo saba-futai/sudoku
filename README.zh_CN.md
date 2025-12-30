@@ -108,7 +108,7 @@ go build -o sudoku cmd/sudoku-tunnel/main.go
 如需走 CDN/代理（例如 Cloudflare 小黄云），设置：
 - `"disable_http_mask": false`
 - `"http_mask_mode": "auto"`（或 `"stream"` / `"poll"`）
-- 客户端 `server_address` 可填写域名（如 `"example.com:443"`）；端口 `443` 会自动使用 HTTPS（或用 `"http_mask_tls": true` 强制）。
+- 客户端 `server_address` 可填写域名（如 `"example.com:443"`）；如需使用 HTTPS，请显式设置 `"http_mask_tls": true`（不再按端口自动推断）。
 
 **注意**：Key一定要用sudoku专门生成
 

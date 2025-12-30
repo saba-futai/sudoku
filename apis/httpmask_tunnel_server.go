@@ -55,34 +55,41 @@ func NewHTTPMaskTunnelServer(cfg *ProtocolConfig) *HTTPMaskTunnelServer {
 //   - handled=true, tunnelConn=nil for HTTP tunnel control requests (e.g., poll push/pull)
 //   - handled=false if this server is not configured to handle HTTP tunnel transports (legacy-only)
 func (s *HTTPMaskTunnelServer) HandleConn(rawConn net.Conn) (tunnelConn net.Conn, targetAddr string, handled bool, err error) {
+	tunnelConn, targetAddr, _, handled, err = s.HandleConnWithUserHash(rawConn)
+	return tunnelConn, targetAddr, handled, err
+}
+
+// HandleConnWithUserHash is like HandleConn but also returns the per-user handshake identifier when a Sudoku
+// tunnel handshake has been completed.
+func (s *HTTPMaskTunnelServer) HandleConnWithUserHash(rawConn net.Conn) (tunnelConn net.Conn, targetAddr string, userHash string, handled bool, err error) {
 	if s == nil || s.cfg == nil {
-		return nil, "", false, nil
+		return nil, "", "", false, nil
 	}
 
 	// Legacy-only server behavior.
 	if s.ts == nil {
-		tunnelConn, targetAddr, err = ServerHandshake(rawConn, s.cfg)
-		return tunnelConn, targetAddr, true, err
+		tunnelConn, targetAddr, userHash, err = ServerHandshakeWithUserHash(rawConn, s.cfg)
+		return tunnelConn, targetAddr, userHash, true, err
 	}
 
 	res, c, err := s.ts.HandleConn(rawConn)
 	if err != nil {
-		return nil, "", true, err
+		return nil, "", "", true, err
 	}
 
 	switch res {
 	case httpmask.HandleDone:
-		return nil, "", true, nil
+		return nil, "", "", true, nil
 	case httpmask.HandlePassThrough:
-		tunnelConn, targetAddr, err = ServerHandshake(c, s.cfg)
-		return tunnelConn, targetAddr, true, err
+		tunnelConn, targetAddr, userHash, err = ServerHandshakeWithUserHash(c, s.cfg)
+		return tunnelConn, targetAddr, userHash, true, err
 	case httpmask.HandleStartTunnel:
 		inner := *s.cfg
 		inner.DisableHTTPMask = true
-		tunnelConn, targetAddr, err = ServerHandshake(c, &inner)
-		return tunnelConn, targetAddr, true, err
+		tunnelConn, targetAddr, userHash, err = ServerHandshakeWithUserHash(c, &inner)
+		return tunnelConn, targetAddr, userHash, true, err
 	default:
-		return nil, "", true, nil
+		return nil, "", "", true, nil
 	}
 }
 
@@ -94,33 +101,40 @@ func (s *HTTPMaskTunnelServer) HandleConn(rawConn net.Conn) (tunnelConn net.Conn
 //   - tunnelConn with isUoT=true if this is a UoT session (caller should run HandleUoT)
 //   - handled=true, tunnelConn=nil for HTTP tunnel control requests (e.g., poll push/pull)
 func (s *HTTPMaskTunnelServer) HandleConnAuto(rawConn net.Conn) (tunnelConn net.Conn, targetAddr string, isUoT bool, handled bool, err error) {
+	tunnelConn, targetAddr, isUoT, _, handled, err = s.HandleConnAutoWithUserHash(rawConn)
+	return tunnelConn, targetAddr, isUoT, handled, err
+}
+
+// HandleConnAutoWithUserHash is like HandleConnAuto but also returns the per-user handshake identifier when a
+// Sudoku tunnel handshake has been completed.
+func (s *HTTPMaskTunnelServer) HandleConnAutoWithUserHash(rawConn net.Conn) (tunnelConn net.Conn, targetAddr string, isUoT bool, userHash string, handled bool, err error) {
 	if s == nil || s.cfg == nil {
-		return nil, "", false, false, nil
+		return nil, "", false, "", false, nil
 	}
 
 	// Legacy-only server behavior.
 	if s.ts == nil {
-		tunnelConn, targetAddr, isUoT, err = ServerHandshakeAuto(rawConn, s.cfg)
-		return tunnelConn, targetAddr, isUoT, true, err
+		tunnelConn, targetAddr, isUoT, userHash, err = ServerHandshakeAutoWithUserHash(rawConn, s.cfg)
+		return tunnelConn, targetAddr, isUoT, userHash, true, err
 	}
 
 	res, c, err := s.ts.HandleConn(rawConn)
 	if err != nil {
-		return nil, "", false, true, err
+		return nil, "", false, "", true, err
 	}
 
 	switch res {
 	case httpmask.HandleDone:
-		return nil, "", false, true, nil
+		return nil, "", false, "", true, nil
 	case httpmask.HandlePassThrough:
-		tunnelConn, targetAddr, isUoT, err = ServerHandshakeAuto(c, s.cfg)
-		return tunnelConn, targetAddr, isUoT, true, err
+		tunnelConn, targetAddr, isUoT, userHash, err = ServerHandshakeAutoWithUserHash(c, s.cfg)
+		return tunnelConn, targetAddr, isUoT, userHash, true, err
 	case httpmask.HandleStartTunnel:
 		inner := *s.cfg
 		inner.DisableHTTPMask = true
-		tunnelConn, targetAddr, isUoT, err = ServerHandshakeAuto(c, &inner)
-		return tunnelConn, targetAddr, isUoT, true, err
+		tunnelConn, targetAddr, isUoT, userHash, err = ServerHandshakeAutoWithUserHash(c, &inner)
+		return tunnelConn, targetAddr, isUoT, userHash, true, err
 	default:
-		return nil, "", false, true, nil
+		return nil, "", false, "", true, nil
 	}
 }
