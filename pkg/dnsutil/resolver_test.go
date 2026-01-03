@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -25,9 +26,9 @@ func TestResolve_IPLiteralBypassDNS(t *testing.T) {
 }
 
 func TestResolve_CacheHitAvoidsDNS(t *testing.T) {
-	var calls int
+	var calls atomic.Int64
 	lookup := func(ctx context.Context, network, host string) ([]net.IP, error) {
-		calls++
+		calls.Add(1)
 		return []net.IP{net.ParseIP("1.2.3.4")}, nil
 	}
 
@@ -50,7 +51,7 @@ func TestResolve_CacheHitAvoidsDNS(t *testing.T) {
 		t.Fatalf("cache mismatch: %s vs %s", addr1, addr2)
 	}
 
-	if calls == 0 {
+	if calls.Load() == 0 {
 		t.Fatalf("expected at least one DNS call")
 	}
 }

@@ -26,6 +26,7 @@ type shortLinkPayload struct {
 	HTTPMaskMode    string `json:"hm,omitempty"` // "legacy" / "stream" / "poll" / "auto"
 	HTTPMaskTLS     bool   `json:"ht,omitempty"` // enable HTTPS (when false/omitted, use plain HTTP)
 	HTTPMaskHost    string `json:"hh,omitempty"` // override HTTP Host/SNI in tunnel modes
+	HTTPMaskMux     string `json:"hx,omitempty"` // "off" / "auto" / "on"
 }
 
 // BuildShortLinkFromConfig builds a sudoku:// short link from the provided config.
@@ -78,6 +79,10 @@ func BuildShortLinkFromConfig(cfg *Config, advertiseHost string) (string, error)
 	if strings.TrimSpace(cfg.HTTPMaskHost) != "" {
 		payload.HTTPMaskHost = strings.TrimSpace(cfg.HTTPMaskHost)
 	}
+	muxMode := strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMultiplex))
+	if muxMode != "" && muxMode != "off" {
+		payload.HTTPMaskMux = muxMode
+	}
 
 	payload.ASCII = encodeASCII(cfg.ASCII)
 	if payload.AEAD == "" {
@@ -115,21 +120,22 @@ func BuildConfigFromShortLink(link string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		Mode:            "client",
-		Transport:       "tcp",
-		LocalPort:       payload.MixPort,
-		ServerAddress:   net.JoinHostPort(payload.Host, strconv.Itoa(payload.Port)),
-		Key:             payload.Key,
-		CustomTable:     payload.CustomTable,
-		CustomTables:    append([]string(nil), payload.CustomTables...),
-		DisableHTTPMask: payload.DisableHTTPMask,
-		HTTPMaskMode:    payload.HTTPMaskMode,
-		HTTPMaskTLS:     payload.HTTPMaskTLS,
-		HTTPMaskHost:    payload.HTTPMaskHost,
-		AEAD:            payload.AEAD,
-		PaddingMin:      5,
-		PaddingMax:      15,
-		ProxyMode:       "pac",
+		Mode:              "client",
+		Transport:         "tcp",
+		LocalPort:         payload.MixPort,
+		ServerAddress:     net.JoinHostPort(payload.Host, strconv.Itoa(payload.Port)),
+		Key:               payload.Key,
+		CustomTable:       payload.CustomTable,
+		CustomTables:      append([]string(nil), payload.CustomTables...),
+		DisableHTTPMask:   payload.DisableHTTPMask,
+		HTTPMaskMode:      payload.HTTPMaskMode,
+		HTTPMaskTLS:       payload.HTTPMaskTLS,
+		HTTPMaskHost:      payload.HTTPMaskHost,
+		HTTPMaskMultiplex: strings.TrimSpace(payload.HTTPMaskMux),
+		AEAD:              payload.AEAD,
+		PaddingMin:        5,
+		PaddingMax:        15,
+		ProxyMode:         "pac",
 		RuleURLs: []string{
 			"https://gh-proxy.org/https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/China/China.list",
 			"https://gh-proxy.org/https://raw.githubusercontent.com/fernvenue/chn-cidr-list/master/ipv4.yaml",
@@ -143,6 +149,18 @@ func BuildConfigFromShortLink(link string) (*Config, error) {
 	cfg.EnablePureDownlink = !payload.PackedDownlink
 	if strings.TrimSpace(cfg.HTTPMaskMode) == "" {
 		cfg.HTTPMaskMode = "legacy"
+	}
+	if cfg.DisableHTTPMask {
+		cfg.HTTPMaskMultiplex = "off"
+	} else {
+		switch strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMultiplex)) {
+		case "", "off":
+			cfg.HTTPMaskMultiplex = "off"
+		case "auto", "on":
+			cfg.HTTPMaskMultiplex = strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMultiplex))
+		default:
+			cfg.HTTPMaskMultiplex = "off"
+		}
 	}
 
 	cfg.ASCII = decodeASCII(payload.ASCII)

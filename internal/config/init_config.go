@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 )
 
 func Load(path string) (*Config, error) {
@@ -31,6 +32,18 @@ func Load(path string) (*Config, error) {
 	}
 	if cfg.HTTPMaskMode == "" {
 		cfg.HTTPMaskMode = "legacy"
+	}
+	if cfg.DisableHTTPMask {
+		cfg.HTTPMaskMultiplex = "off"
+	} else {
+		switch strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMultiplex)) {
+		case "", "off":
+			cfg.HTTPMaskMultiplex = "off"
+		case "auto", "on":
+			cfg.HTTPMaskMultiplex = strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMultiplex))
+		default:
+			cfg.HTTPMaskMultiplex = "off"
+		}
 	}
 
 	if !cfg.EnablePureDownlink && cfg.AEAD == "none" {

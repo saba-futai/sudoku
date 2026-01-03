@@ -452,29 +452,31 @@ func parseSocksUDPResponse(t *testing.T, packet []byte) (string, []byte) {
 }
 
 // Start Sudoku endpoints.
-func startSudokuServer(cfg *config.Config) {
+func startSudokuServer(t testing.TB, cfg *config.Config) {
+	t.Helper()
 	table, err := sudoku.NewTableWithCustom(cfg.Key, cfg.ASCII, cfg.CustomTable)
 	if err != nil {
-		panic(err)
+		t.Fatalf("build table: %v", err)
 	}
 	go app.RunServer(cfg, []*sudoku.Table{table})
-	time.Sleep(200 * time.Millisecond)
-	waitForPort(cfg.LocalPort)
+	waitForPort(t, cfg.LocalPort)
 }
 
-func startSudokuClient(cfg *config.Config) {
+func startSudokuClient(t testing.TB, cfg *config.Config) {
+	t.Helper()
 	table, err := sudoku.NewTableWithCustom(cfg.Key, cfg.ASCII, cfg.CustomTable)
 	if err != nil {
-		panic(err)
+		t.Fatalf("build table: %v", err)
 	}
 	go app.RunClient(cfg, []*sudoku.Table{table})
-	time.Sleep(200 * time.Millisecond)
-	waitForPort(cfg.LocalPort)
+	waitForPort(t, cfg.LocalPort)
 }
 
-func waitForPort(port int) {
+func waitForPort(t testing.TB, port int) {
+	t.Helper()
 	addr := fmt.Sprintf("127.0.0.1:%d", port)
-	for i := 0; i < 10; i++ {
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
 		conn, err := net.DialTimeout("tcp", addr, 50*time.Millisecond)
 		if err == nil {
 			conn.Close()
@@ -482,6 +484,7 @@ func waitForPort(port int) {
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+	t.Fatalf("port not ready: %s", addr)
 }
 
 // Shared helpers for tests.
@@ -533,7 +536,7 @@ func runTCPTransfer(t *testing.T, asciiMode string, pureDownlink bool, key strin
 		PaddingMin:         8,
 		PaddingMax:         18,
 	}
-	startSudokuServer(serverCfg)
+	startSudokuServer(t, serverCfg)
 
 	upChan := make(chan []byte, 256)
 	downChan := make(chan []byte, 256)
@@ -550,7 +553,7 @@ func runTCPTransfer(t *testing.T, asciiMode string, pureDownlink bool, key strin
 		EnablePureDownlink: pureDownlink,
 		ProxyMode:          "global",
 	}
-	startSudokuClient(clientCfg)
+	startSudokuClient(t, clientCfg)
 
 	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", clientPort))
 	if err != nil {
@@ -665,7 +668,7 @@ func TestUDPOverTCPWithPackedDownlink(t *testing.T) {
 		EnablePureDownlink: false,
 		FallbackAddr:       "127.0.0.1:80",
 	}
-	startSudokuServer(serverCfg)
+	startSudokuServer(t, serverCfg)
 	startDualMiddleman(middlemanPort, serverPort, nil, nil)
 
 	clientCfg := &config.Config{
@@ -678,7 +681,7 @@ func TestUDPOverTCPWithPackedDownlink(t *testing.T) {
 		EnablePureDownlink: false,
 		ProxyMode:          "global",
 	}
-	startSudokuClient(clientCfg)
+	startSudokuClient(t, clientCfg)
 
 	ctrlConn, udpRelay := performUDPAssociate(t, fmt.Sprintf("127.0.0.1:%d", clientPort), nil)
 	defer ctrlConn.Close()
@@ -733,7 +736,7 @@ func TestUDPOverTCP_UDPAssociate_RemoteAddressAndIPFilter(t *testing.T) {
 		EnablePureDownlink: true,
 		FallbackAddr:       "127.0.0.1:80",
 	}
-	startSudokuServer(serverCfg)
+	startSudokuServer(t, serverCfg)
 	startDualMiddleman(middlemanPort, serverPort, nil, nil)
 
 	clientCfg := &config.Config{
@@ -746,7 +749,7 @@ func TestUDPOverTCP_UDPAssociate_RemoteAddressAndIPFilter(t *testing.T) {
 		EnablePureDownlink: true,
 		ProxyMode:          "global",
 	}
-	startSudokuClient(clientCfg)
+	startSudokuClient(t, clientCfg)
 
 	// Connect via a non-loopback local interface so the UDP relay must not be stuck on 127.0.0.1.
 	hostIP := pickNonLoopbackIPv4()
@@ -850,7 +853,7 @@ func TestUDPOverTCP_Stress_ManyDatagrams(t *testing.T) {
 		PaddingMin:         5,
 		PaddingMax:         20,
 	}
-	startSudokuServer(serverCfg)
+	startSudokuServer(t, serverCfg)
 	startDualMiddleman(middlemanPort, serverPort, nil, nil)
 
 	clientCfg := &config.Config{
@@ -865,7 +868,7 @@ func TestUDPOverTCP_Stress_ManyDatagrams(t *testing.T) {
 		PaddingMin:         5,
 		PaddingMax:         20,
 	}
-	startSudokuClient(clientCfg)
+	startSudokuClient(t, clientCfg)
 
 	ctrlConn, udpRelay := performUDPAssociate(t, fmt.Sprintf("127.0.0.1:%d", clientPort), nil)
 	defer ctrlConn.Close()
@@ -919,7 +922,7 @@ func TestFallback(t *testing.T) {
 		EnablePureDownlink: true,
 		FallbackAddr:       fmt.Sprintf("127.0.0.1:%d", webPort),
 	}
-	startSudokuServer(serverCfg)
+	startSudokuServer(t, serverCfg)
 
 	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d", serverPort))
 	if err != nil {
@@ -956,7 +959,7 @@ func TestConcurrentPackedSessions(t *testing.T) {
 		PaddingMin:         5,
 		PaddingMax:         20,
 	}
-	startSudokuServer(serverCfg)
+	startSudokuServer(t, serverCfg)
 	startDualMiddleman(middlemanPort, serverPort, nil, nil)
 
 	clientCfg := &config.Config{
@@ -969,7 +972,7 @@ func TestConcurrentPackedSessions(t *testing.T) {
 		EnablePureDownlink: false,
 		ProxyMode:          "global",
 	}
-	startSudokuClient(clientCfg)
+	startSudokuClient(t, clientCfg)
 
 	var wg sync.WaitGroup
 	conns := 16
@@ -1028,7 +1031,7 @@ func TestEd25519KeyInterop(t *testing.T) {
 		EnablePureDownlink: false,
 		FallbackAddr:       "127.0.0.1:80",
 	}
-	startSudokuServer(serverCfg)
+	startSudokuServer(t, serverCfg)
 
 	clientCfg := &config.Config{
 		Mode:               "client",
@@ -1040,7 +1043,7 @@ func TestEd25519KeyInterop(t *testing.T) {
 		EnablePureDownlink: false,
 		ProxyMode:          "global",
 	}
-	startSudokuClient(clientCfg)
+	startSudokuClient(t, clientCfg)
 
 	conn, err := net.Dial("tcp", fmt.Sprintf("127.0.0.1:%d", clientPort))
 	if err != nil {

@@ -131,7 +131,7 @@ func RunClient(cfg *config.Config, tables []*sudoku.Table) {
 		PrivateKey: privateKeyBytes,
 	}
 
-	dialer = &tunnel.StandardDialer{
+	dialer = &tunnel.AdaptiveDialer{
 		BaseDialer: baseDialer,
 	}
 
@@ -643,7 +643,20 @@ func handleHTTP(conn net.Conn, cfg *config.Config, table *sudoku.Table, geoMgr *
 		}
 
 		if err := req.Write(targetConn); err != nil {
-			targetConn.Close()
+			_ = targetConn.Close()
+
+			retryable := req.Body == nil || req.Body == http.NoBody
+			if retryable && (req.ContentLength <= 0) {
+				if targetConn2, ok := dialTarget(host, destIP, cfg, geoMgr, dialer); ok {
+					if err2 := req.Write(targetConn2); err2 == nil {
+						pipeConn(conn, targetConn2)
+						return
+					}
+					_ = targetConn2.Close()
+				}
+			}
+
+			_, _ = conn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
 			return
 		}
 		pipeConn(conn, targetConn)

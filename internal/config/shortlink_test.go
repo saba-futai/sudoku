@@ -68,6 +68,7 @@ func TestShortLinkRoundTrip_CustomTablesAndCDN(t *testing.T) {
 		DisableHTTPMask:    false,
 		HTTPMaskMode:       "auto",
 		HTTPMaskTLS:        true,
+		HTTPMaskMultiplex:  "auto",
 	}
 
 	link, err := BuildShortLinkFromConfig(cfg, "")
@@ -99,6 +100,9 @@ func TestShortLinkRoundTrip_CustomTablesAndCDN(t *testing.T) {
 	}
 	if !decoded.HTTPMaskTLS {
 		t.Fatalf("http mask tls mismatch, got %v", decoded.HTTPMaskTLS)
+	}
+	if decoded.HTTPMaskMultiplex != "auto" {
+		t.Fatalf("http mask multiplex mismatch, got %s", decoded.HTTPMaskMultiplex)
 	}
 	if decoded.DisableHTTPMask {
 		t.Fatalf("disable http mask mismatch, got %v", decoded.DisableHTTPMask)

@@ -31,4 +31,8 @@ type Config struct {
 	// HTTPMaskHost optionally overrides the HTTP Host header / SNI host for HTTP tunnel modes (client-side).
 	// When empty, it is derived from ServerAddress.
 	HTTPMaskHost string `json:"http_mask_host"`
+	// HTTPMaskMultiplex controls whether the client reuses a single HTTP-masked tunnel connection
+	// to open multiple logical streams (reduces RTT for subsequent connections).
+	// Values: "off" / "auto" / "on".
+	HTTPMaskMultiplex string `json:"http_mask_multiplex"`
 }

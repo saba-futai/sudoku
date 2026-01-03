@@ -1,0 +1,53 @@
+name: push-ci
+
+on:
+  push:
+    branches:
+      - "**"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Strict Tests (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            race: "true"
+          - os: macos-latest
+            race: "true"
+          - os: windows-latest
+            race: "false"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Go vet
+        shell: bash
+        run: |
+          set -euo pipefail
+          go vet ./...
+
+      - name: Run full test suite
+        shell: bash
+        run: |
+          set -euo pipefail
+          FLAGS="-count=1 -shuffle=on"
+          if [ "${{ matrix.race }}" = "true" ]; then
+            FLAGS="$FLAGS -race"
+          fi
+          go test ./... $FLAGS
+
