@@ -177,7 +177,7 @@ func establishBaseConn(ctx context.Context, cfg *ProtocolConfig, validate func(*
 
 			handshake := buildHandshakePayload(cfg.Key)
 			if len(cfg.tableCandidates()) > 1 {
-				handshake[15] = tableID
+				handshake[8] = tableID
 			}
 			if _, err := cConn.Write(handshake[:]); err != nil {
 				cConn.Close()
@@ -230,7 +230,7 @@ func establishBaseConn(ctx context.Context, cfg *ProtocolConfig, validate func(*
 
 	handshake := buildHandshakePayload(cfg.Key)
 	if len(cfg.tableCandidates()) > 1 {
-		handshake[15] = tableID
+		handshake[8] = tableID
 	}
 	if _, err := cConn.Write(handshake[:]); err != nil {
 		cConn.Close()
