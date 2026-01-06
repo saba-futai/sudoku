@@ -326,12 +326,16 @@ func (c *muxStream) closeNoSend(err error) {
 
 func (c *muxStream) closedErr() error {
 	c.mu.Lock()
-	err := c.closeErr
+	err := c.closedErrLocked()
 	c.mu.Unlock()
-	if err == nil {
+	return err
+}
+
+func (c *muxStream) closedErrLocked() error {
+	if c.closeErr == nil {
 		return io.ErrClosedPipe
 	}
-	return err
+	return c.closeErr
 }
 
 func (c *muxStream) Read(p []byte) (int, error) {
@@ -349,7 +353,7 @@ func (c *muxStream) Read(p []byte) (int, error) {
 		c.queue = c.queue[1:]
 	}
 	if len(c.readBuf) == 0 && c.closed {
-		return 0, c.closedErr()
+		return 0, c.closedErrLocked()
 	}
 
 	n := copy(p, c.readBuf)

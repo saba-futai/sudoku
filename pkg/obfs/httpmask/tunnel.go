@@ -575,7 +575,9 @@ func dialStreamSplit(ctx context.Context, serverAddress string, opts TunnelDialO
 
 func (c *streamSplitConn) pullLoop() {
 	const (
-		requestTimeout = 30 * time.Second
+		// requestTimeout must be long enough for continuous high-throughput streams (e.g. mux + large downloads).
+		// If it is too short, the client cancels the response mid-body and corrupts the byte stream.
+		requestTimeout = 2 * time.Minute
 		readChunkSize  = 32 * 1024
 		idleBackoff    = 25 * time.Millisecond
 		maxDialRetry   = 12
