@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/http"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -237,4 +238,34 @@ func TestTunnelServer_Stream_SplitSession_PushPull(t *testing.T) {
 			t.Fatalf("pulled payload mismatch: got %q want %q", string(body), "xyz")
 		}
 	}
+}
+
+func TestPollConn_CloseWrite_NoPanic(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	const n = 1000
+	c := &pollConn{
+		ctx:    ctx,
+		cancel: cancel,
+		queuedConn: queuedConn{
+			rxc:        make(chan []byte, 1),
+			closed:     make(chan struct{}),
+			writeCh:    make(chan []byte, n),
+			localAddr:  &net.TCPAddr{},
+			remoteAddr: &net.TCPAddr{},
+		},
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(n)
+	for i := 0; i < n; i++ {
+		go func() {
+			defer wg.Done()
+			_, _ = c.Write([]byte("x"))
+		}()
+	}
+
+	_ = c.Close()
+	wg.Wait()
 }

@@ -217,10 +217,10 @@ func dialStreamOne(ctx context.Context, serverAddress string, opts TunnelDialOpt
 
 	reqBodyR, reqBodyW := io.Pipe()
 
-	ctx, cancel := context.WithCancel(ctx)
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, u.String(), reqBodyR)
+	connCtx, connCancel := context.WithCancel(context.Background())
+	req, err := http.NewRequestWithContext(connCtx, http.MethodPost, u.String(), reqBodyR)
 	if err != nil {
-		cancel()
+		connCancel()
 		_ = reqBodyW.Close()
 		return nil, err
 	}
@@ -237,53 +237,45 @@ func dialStreamOne(ctx context.Context, serverAddress string, opts TunnelDialOpt
 	req.Header.Set("X-Sudoku-Tunnel", string(TunnelModeStream))
 	req.Header.Set("X-Sudoku-Version", "1")
 
-	transport := &http.Transport{
-		Proxy:               http.ProxyFromEnvironment,
-		ForceAttemptHTTP2:   true,
-		DisableCompression:  true,
-		MaxIdleConns:        16,
-		IdleConnTimeout:     30 * time.Second,
-		TLSHandshakeTimeout: 10 * time.Second,
-		DialContext: func(dialCtx context.Context, network, addr string) (net.Conn, error) {
-			var d net.Dialer
-			if addr == urlHost {
-				addr = dialAddr
-			}
-			return d.DialContext(dialCtx, network, addr)
-		},
+	client := newHTTPClient(urlHost, dialAddr, serverName, scheme, 32)
+
+	type doResult struct {
+		resp *http.Response
+		err  error
 	}
-	if scheme == "https" {
-		transport.TLSClientConfig = &tls.Config{
-			ServerName: serverName,
-			MinVersion: tls.VersionTLS12,
+	doCh := make(chan doResult, 1)
+	go func() {
+		resp, doErr := client.Do(req)
+		doCh <- doResult{resp: resp, err: doErr}
+	}()
+
+	select {
+	case <-ctx.Done():
+		connCancel()
+		_ = reqBodyW.Close()
+		return nil, ctx.Err()
+	case r := <-doCh:
+		if r.err != nil {
+			connCancel()
+			_ = reqBodyW.Close()
+			return nil, r.err
 		}
-	}
+		if r.resp.StatusCode != http.StatusOK {
+			defer r.resp.Body.Close()
+			body, _ := io.ReadAll(io.LimitReader(r.resp.Body, 4*1024))
+			connCancel()
+			_ = reqBodyW.Close()
+			return nil, fmt.Errorf("stream bad status: %s (%s)", r.resp.Status, strings.TrimSpace(string(body)))
+		}
 
-	client := &http.Client{
-		Transport: transport,
+		return &httpStreamConn{
+			reader:     r.resp.Body,
+			writer:     reqBodyW,
+			cancel:     connCancel,
+			localAddr:  &net.TCPAddr{},
+			remoteAddr: &net.TCPAddr{},
+		}, nil
 	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		cancel()
-		_ = reqBodyW.Close()
-		return nil, err
-	}
-	if resp.StatusCode != http.StatusOK {
-		defer resp.Body.Close()
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4*1024))
-		cancel()
-		_ = reqBodyW.Close()
-		return nil, fmt.Errorf("stream bad status: %s (%s)", resp.Status, strings.TrimSpace(string(body)))
-	}
-
-	return &httpStreamConn{
-		reader:     resp.Body,
-		writer:     reqBodyW,
-		cancel:     cancel,
-		localAddr:  &net.TCPAddr{},
-		remoteAddr: &net.TCPAddr{},
-	}, nil
 }
 
 type queuedConn struct {
@@ -294,8 +286,38 @@ type queuedConn struct {
 
 	mu         sync.Mutex
 	readBuf    []byte
+	closeErr   error
 	localAddr  net.Addr
 	remoteAddr net.Addr
+}
+
+func (c *queuedConn) closeWithError(err error) error {
+	c.mu.Lock()
+	select {
+	case <-c.closed:
+		c.mu.Unlock()
+		return nil
+	default:
+		if err == nil {
+			err = io.ErrClosedPipe
+		}
+		if c.closeErr == nil {
+			c.closeErr = err
+		}
+		close(c.closed)
+	}
+	c.mu.Unlock()
+	return nil
+}
+
+func (c *queuedConn) closedErr() error {
+	c.mu.Lock()
+	err := c.closeErr
+	c.mu.Unlock()
+	if err == nil {
+		return io.ErrClosedPipe
+	}
+	return err
 }
 
 func (c *queuedConn) Read(b []byte) (n int, err error) {
@@ -303,7 +325,7 @@ func (c *queuedConn) Read(b []byte) (n int, err error) {
 		select {
 		case c.readBuf = <-c.rxc:
 		case <-c.closed:
-			return 0, io.ErrClosedPipe
+			return 0, c.closedErr()
 		}
 	}
 	n = copy(b, c.readBuf)
@@ -319,7 +341,7 @@ func (c *queuedConn) Write(b []byte) (n int, err error) {
 	select {
 	case <-c.closed:
 		c.mu.Unlock()
-		return 0, io.ErrClosedPipe
+		return 0, c.closedErr()
 	default:
 	}
 	c.mu.Unlock()
@@ -330,7 +352,7 @@ func (c *queuedConn) Write(b []byte) (n int, err error) {
 	case c.writeCh <- payload:
 		return len(b), nil
 	case <-c.closed:
-		return 0, io.ErrClosedPipe
+		return 0, c.closedErr()
 	}
 }
 
@@ -355,15 +377,7 @@ type streamSplitConn struct {
 }
 
 func (c *streamSplitConn) Close() error {
-	c.mu.Lock()
-	select {
-	case <-c.closed:
-		c.mu.Unlock()
-		return nil
-	default:
-		close(c.closed)
-	}
-	c.mu.Unlock()
+	_ = c.closeWithError(io.ErrClosedPipe)
 
 	if c.cancel != nil {
 		c.cancel()
@@ -382,29 +396,55 @@ type sessionDialInfo struct {
 	headerHost string
 }
 
+type transportKey struct {
+	scheme     string
+	urlHost    string
+	dialAddr   string
+	serverName string
+}
+
+var (
+	transportMu   sync.Mutex
+	transportPool = make(map[transportKey]*http.Transport)
+)
+
 func newHTTPClient(urlHost, dialAddr, serverName, scheme string, maxIdleConns int) *http.Client {
-	transport := &http.Transport{
-		Proxy:                 http.ProxyFromEnvironment,
-		ForceAttemptHTTP2:     true,
-		DisableCompression:    true,
-		MaxIdleConns:          maxIdleConns,
-		IdleConnTimeout:       30 * time.Second,
-		ResponseHeaderTimeout: 20 * time.Second,
-		TLSHandshakeTimeout:   10 * time.Second,
-		DialContext: func(dialCtx context.Context, network, addr string) (net.Conn, error) {
-			var d net.Dialer
-			if addr == urlHost {
-				addr = dialAddr
-			}
-			return d.DialContext(dialCtx, network, addr)
-		},
+	key := transportKey{
+		scheme:     scheme,
+		urlHost:    urlHost,
+		dialAddr:   dialAddr,
+		serverName: serverName,
 	}
-	if scheme == "https" {
-		transport.TLSClientConfig = &tls.Config{
-			ServerName: serverName,
-			MinVersion: tls.VersionTLS12,
+
+	transportMu.Lock()
+	transport := transportPool[key]
+	if transport == nil {
+		transport = &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			ForceAttemptHTTP2:     scheme == "https",
+			DisableCompression:    true,
+			MaxIdleConns:          maxIdleConns,
+			IdleConnTimeout:       30 * time.Second,
+			ResponseHeaderTimeout: 20 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			DialContext: func(dialCtx context.Context, network, addr string) (net.Conn, error) {
+				var d net.Dialer
+				if addr == urlHost {
+					addr = dialAddr
+				}
+				return d.DialContext(dialCtx, network, addr)
+			},
 		}
+		if scheme == "https" {
+			transport.TLSClientConfig = &tls.Config{
+				ServerName: serverName,
+				MinVersion: tls.VersionTLS12,
+			}
+		}
+		transportPool[key] = transport
 	}
+	transportMu.Unlock()
+
 	return &http.Client{Transport: transport}
 }
 
@@ -513,10 +553,18 @@ func dialStreamSplit(ctx context.Context, serverAddress string, opts TunnelDialO
 
 func (c *streamSplitConn) pullLoop() {
 	const (
-		readChunkSize = 32 * 1024
-		idleBackoff   = 25 * time.Millisecond
+		requestTimeout = 30 * time.Second
+		readChunkSize  = 32 * 1024
+		idleBackoff    = 25 * time.Millisecond
+		maxDialRetry   = 12
+		minBackoff     = 10 * time.Millisecond
+		maxBackoff     = 250 * time.Millisecond
 	)
 
+	var (
+		dialRetry int
+		backoff   = minBackoff
+	)
 	buf := make([]byte, readChunkSize)
 	for {
 		select {
@@ -525,8 +573,10 @@ func (c *streamSplitConn) pullLoop() {
 		default:
 		}
 
-		req, err := http.NewRequestWithContext(c.ctx, http.MethodGet, c.pullURL, nil)
+		reqCtx, cancel := context.WithTimeout(c.ctx, requestTimeout)
+		req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, c.pullURL, nil)
 		if err != nil {
+			cancel()
 			_ = c.Close()
 			return
 		}
@@ -535,12 +585,29 @@ func (c *streamSplitConn) pullLoop() {
 
 		resp, err := c.client.Do(req)
 		if err != nil {
+			cancel()
+			if isDialError(err) && dialRetry < maxDialRetry {
+				dialRetry++
+				select {
+				case <-time.After(backoff):
+				case <-c.closed:
+					return
+				}
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+				continue
+			}
 			_ = c.Close()
 			return
 		}
+		dialRetry = 0
+		backoff = minBackoff
 
 		if resp.StatusCode != http.StatusOK {
 			_ = resp.Body.Close()
+			cancel()
 			_ = c.Close()
 			return
 		}
@@ -556,11 +623,13 @@ func (c *streamSplitConn) pullLoop() {
 				case c.rxc <- payload:
 				case <-c.closed:
 					_ = resp.Body.Close()
+					cancel()
 					return
 				}
 			}
 			if rerr != nil {
 				_ = resp.Body.Close()
+				cancel()
 				if errors.Is(rerr, io.EOF) {
 					// Long-poll ended; retry.
 					break
@@ -569,6 +638,7 @@ func (c *streamSplitConn) pullLoop() {
 				return
 			}
 		}
+		cancel()
 		if !readAny {
 			// Avoid tight loop if the server replied quickly with an empty body.
 			select {
@@ -585,6 +655,9 @@ func (c *streamSplitConn) pushLoop() {
 		maxBatchBytes  = 256 * 1024
 		flushInterval  = 5 * time.Millisecond
 		requestTimeout = 20 * time.Second
+		maxDialRetry   = 12
+		minBackoff     = 10 * time.Millisecond
+		maxBackoff     = 250 * time.Millisecond
 	)
 
 	var (
@@ -593,16 +666,16 @@ func (c *streamSplitConn) pushLoop() {
 	)
 	defer timer.Stop()
 
-	flush := func() bool {
+	flush := func() error {
 		if buf.Len() == 0 {
-			return true
+			return nil
 		}
 
 		reqCtx, cancel := context.WithTimeout(c.ctx, requestTimeout)
 		req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.pushURL, bytes.NewReader(buf.Bytes()))
 		if err != nil {
 			cancel()
-			return false
+			return err
 		}
 		req.Host = c.headerHost
 		applyTunnelHeaders(req.Header, c.headerHost, TunnelModeStream)
@@ -611,17 +684,41 @@ func (c *streamSplitConn) pushLoop() {
 		resp, err := c.client.Do(req)
 		if err != nil {
 			cancel()
-			return false
+			return err
 		}
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4*1024))
 		_ = resp.Body.Close()
 		cancel()
 		if resp.StatusCode != http.StatusOK {
-			return false
+			return fmt.Errorf("bad status: %s", resp.Status)
 		}
 
 		buf.Reset()
-		return true
+		return nil
+	}
+
+	flushWithRetry := func() error {
+		dialRetry := 0
+		backoff := minBackoff
+		for {
+			if err := flush(); err == nil {
+				return nil
+			} else if isDialError(err) && dialRetry < maxDialRetry {
+				dialRetry++
+				select {
+				case <-time.After(backoff):
+				case <-c.closed:
+					return io.ErrClosedPipe
+				}
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+				continue
+			} else {
+				return err
+			}
+		}
 	}
 
 	resetTimer := func() {
@@ -640,14 +737,14 @@ func (c *streamSplitConn) pushLoop() {
 		select {
 		case b, ok := <-c.writeCh:
 			if !ok {
-				_ = flush()
+				_ = flushWithRetry()
 				return
 			}
 			if len(b) == 0 {
 				continue
 			}
 			if buf.Len()+len(b) > maxBatchBytes {
-				if !flush() {
+				if err := flushWithRetry(); err != nil {
 					_ = c.Close()
 					return
 				}
@@ -655,20 +752,20 @@ func (c *streamSplitConn) pushLoop() {
 			}
 			_, _ = buf.Write(b)
 			if buf.Len() >= maxBatchBytes {
-				if !flush() {
+				if err := flushWithRetry(); err != nil {
 					_ = c.Close()
 					return
 				}
 				resetTimer()
 			}
 		case <-timer.C:
-			if !flush() {
+			if err := flushWithRetry(); err != nil {
 				_ = c.Close()
 				return
 			}
 			resetTimer()
 		case <-c.closed:
-			_ = flush()
+			_ = flushWithRetry()
 			return
 		}
 	}
@@ -677,6 +774,9 @@ func (c *streamSplitConn) pushLoop() {
 type pollConn struct {
 	queuedConn
 
+	ctx    context.Context
+	cancel context.CancelFunc
+
 	client     *http.Client
 	pushURL    string
 	pullURL    string
@@ -684,22 +784,31 @@ type pollConn struct {
 	headerHost string
 }
 
-func (c *pollConn) Close() error {
-	c.mu.Lock()
-	select {
-	case <-c.closed:
-		c.mu.Unlock()
-		return nil
-	default:
-		close(c.closed)
+func isDialError(err error) bool {
+	var urlErr *url.Error
+	if errors.As(err, &urlErr) {
+		return isDialError(urlErr.Err)
 	}
-	c.mu.Unlock()
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		if opErr.Op == "dial" || opErr.Op == "connect" {
+			return true
+		}
+	}
+	return false
+}
 
-	close(c.writeCh)
-
+func (c *pollConn) closeWithError(err error) error {
+	_ = c.queuedConn.closeWithError(err)
+	if c.cancel != nil {
+		c.cancel()
+	}
 	bestEffortCloseSession(c.client, c.closeURL, c.headerHost, TunnelModePoll)
-
 	return nil
+}
+
+func (c *pollConn) Close() error {
+	return c.closeWithError(io.ErrClosedPipe)
 }
 
 func dialPoll(ctx context.Context, serverAddress string, opts TunnelDialOptions) (net.Conn, error) {
@@ -708,7 +817,10 @@ func dialPoll(ctx context.Context, serverAddress string, opts TunnelDialOptions)
 		return nil, err
 	}
 
+	connCtx, cancel := context.WithCancel(context.Background())
 	c := &pollConn{
+		ctx:        connCtx,
+		cancel:     cancel,
 		client:     info.client,
 		pushURL:    info.pushURL,
 		pullURL:    info.pullURL,
@@ -729,6 +841,16 @@ func dialPoll(ctx context.Context, serverAddress string, opts TunnelDialOptions)
 }
 
 func (c *pollConn) pullLoop() {
+	const (
+		maxDialRetry = 12
+		minBackoff   = 10 * time.Millisecond
+		maxBackoff   = 250 * time.Millisecond
+	)
+
+	var (
+		dialRetry int
+		backoff   = minBackoff
+	)
 	for {
 		select {
 		case <-c.closed:
@@ -736,9 +858,9 @@ func (c *pollConn) pullLoop() {
 		default:
 		}
 
-		req, err := http.NewRequest(http.MethodGet, c.pullURL, nil)
+		req, err := http.NewRequestWithContext(c.ctx, http.MethodGet, c.pullURL, nil)
 		if err != nil {
-			_ = c.Close()
+			_ = c.closeWithError(err)
 			return
 		}
 		req.Host = c.headerHost
@@ -746,13 +868,28 @@ func (c *pollConn) pullLoop() {
 
 		resp, err := c.client.Do(req)
 		if err != nil {
-			_ = c.Close()
+			if isDialError(err) && dialRetry < maxDialRetry {
+				dialRetry++
+				select {
+				case <-time.After(backoff):
+				case <-c.closed:
+					return
+				}
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+				continue
+			}
+			_ = c.closeWithError(fmt.Errorf("poll pull request failed: %w", err))
 			return
 		}
+		dialRetry = 0
+		backoff = minBackoff
 
 		if resp.StatusCode != http.StatusOK {
 			_ = resp.Body.Close()
-			_ = c.Close()
+			_ = c.closeWithError(fmt.Errorf("poll pull bad status: %s", resp.Status))
 			return
 		}
 
@@ -765,7 +902,7 @@ func (c *pollConn) pullLoop() {
 			payload, err := base64.StdEncoding.DecodeString(line)
 			if err != nil {
 				_ = resp.Body.Close()
-				_ = c.Close()
+				_ = c.closeWithError(fmt.Errorf("poll pull decode failed: %w", err))
 				return
 			}
 			select {
@@ -777,7 +914,7 @@ func (c *pollConn) pullLoop() {
 		}
 		_ = resp.Body.Close()
 		if err := scanner.Err(); err != nil {
-			_ = c.Close()
+			_ = c.closeWithError(fmt.Errorf("poll pull scan failed: %w", err))
 			return
 		}
 	}
@@ -788,6 +925,9 @@ func (c *pollConn) pushLoop() {
 		maxBatchBytes   = 64 * 1024
 		flushInterval   = 5 * time.Millisecond
 		maxLineRawBytes = 16 * 1024
+		maxDialRetry    = 12
+		minBackoff      = 10 * time.Millisecond
+		maxBackoff      = 250 * time.Millisecond
 	)
 
 	var (
@@ -797,14 +937,16 @@ func (c *pollConn) pushLoop() {
 	)
 	defer timer.Stop()
 
-	flush := func() bool {
+	flush := func() error {
 		if buf.Len() == 0 {
-			return true
+			return nil
 		}
 
-		req, err := http.NewRequest(http.MethodPost, c.pushURL, bytes.NewReader(buf.Bytes()))
+		reqCtx, cancel := context.WithTimeout(c.ctx, 20*time.Second)
+		req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, c.pushURL, bytes.NewReader(buf.Bytes()))
 		if err != nil {
-			return false
+			cancel()
+			return err
 		}
 		req.Host = c.headerHost
 		applyTunnelHeaders(req.Header, c.headerHost, TunnelModePoll)
@@ -812,17 +954,43 @@ func (c *pollConn) pushLoop() {
 
 		resp, err := c.client.Do(req)
 		if err != nil {
-			return false
+			cancel()
+			return err
 		}
 		_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4*1024))
 		_ = resp.Body.Close()
+		cancel()
 		if resp.StatusCode != http.StatusOK {
-			return false
+			return fmt.Errorf("bad status: %s", resp.Status)
 		}
 
 		buf.Reset()
 		pendingRaw = 0
-		return true
+		return nil
+	}
+
+	flushWithRetry := func() error {
+		dialRetry := 0
+		backoff := minBackoff
+		for {
+			if err := flush(); err == nil {
+				return nil
+			} else if isDialError(err) && dialRetry < maxDialRetry {
+				dialRetry++
+				select {
+				case <-time.After(backoff):
+				case <-c.closed:
+					return c.closedErr()
+				}
+				backoff *= 2
+				if backoff > maxBackoff {
+					backoff = maxBackoff
+				}
+				continue
+			} else {
+				return err
+			}
+		}
 	}
 
 	resetTimer := func() {
@@ -841,7 +1009,7 @@ func (c *pollConn) pushLoop() {
 		select {
 		case b, ok := <-c.writeCh:
 			if !ok {
-				_ = flush()
+				_ = flushWithRetry()
 				return
 			}
 			if len(b) == 0 {
@@ -858,8 +1026,8 @@ func (c *pollConn) pushLoop() {
 
 				encLen := base64.StdEncoding.EncodedLen(len(chunk))
 				if pendingRaw+len(chunk) > maxBatchBytes || buf.Len()+encLen+1 > maxBatchBytes*2 {
-					if !flush() {
-						_ = c.Close()
+					if err := flushWithRetry(); err != nil {
+						_ = c.closeWithError(fmt.Errorf("poll push flush failed: %w", err))
 						return
 					}
 				}
@@ -872,20 +1040,20 @@ func (c *pollConn) pushLoop() {
 			}
 
 			if pendingRaw >= maxBatchBytes {
-				if !flush() {
-					_ = c.Close()
+				if err := flushWithRetry(); err != nil {
+					_ = c.closeWithError(fmt.Errorf("poll push flush failed: %w", err))
 					return
 				}
 				resetTimer()
 			}
 		case <-timer.C:
-			if !flush() {
-				_ = c.Close()
+			if err := flushWithRetry(); err != nil {
+				_ = c.closeWithError(fmt.Errorf("poll push flush failed: %w", err))
 				return
 			}
 			resetTimer()
 		case <-c.closed:
-			_ = flush()
+			_ = flushWithRetry()
 			return
 		}
 	}
