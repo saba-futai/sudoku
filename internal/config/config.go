@@ -31,8 +31,9 @@ type Config struct {
 	// HTTPMaskHost optionally overrides the HTTP Host header / SNI host for HTTP tunnel modes (client-side).
 	// When empty, it is derived from ServerAddress.
 	HTTPMaskHost string `json:"http_mask_host"`
-	// HTTPMaskMultiplex controls whether the client reuses a single HTTP-masked tunnel connection
-	// to open multiple logical streams (reduces RTT for subsequent connections).
-	// Values: "off" / "auto" / "on".
+	// HTTPMaskMultiplex controls how connections are multiplexed when HTTPMask tunnel modes are enabled:
+	//   - "off": disable reuse; each target dials its own HTTPMask tunnel
+	//   - "auto": reuse underlying HTTP connections across multiple tunnel dials (HTTP/1.1 keep-alive / HTTP/2)
+	//   - "on": keep a single long-lived tunnel and multiplex multiple target streams inside it (single tunnel, multi-target)
 	HTTPMaskMultiplex string `json:"http_mask_multiplex"`
 }

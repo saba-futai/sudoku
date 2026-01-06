@@ -131,8 +131,15 @@ func RunClient(cfg *config.Config, tables []*sudoku.Table) {
 		PrivateKey: privateKeyBytes,
 	}
 
-	dialer = &tunnel.AdaptiveDialer{
-		BaseDialer: baseDialer,
+	httpMaskMode := strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMode))
+	httpMaskMux := strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMultiplex))
+	if !cfg.DisableHTTPMask && (httpMaskMode == "stream" || httpMaskMode == "poll" || httpMaskMode == "auto") && httpMaskMux == "on" {
+		dialer = &tunnel.MuxDialer{BaseDialer: baseDialer}
+		log.Printf("Enabled HTTPMask session mux (single tunnel, multi-target)")
+	} else {
+		dialer = &tunnel.AdaptiveDialer{
+			BaseDialer: baseDialer,
+		}
 	}
 
 	// 2. 初始化 GeoIP/PAC 管理器

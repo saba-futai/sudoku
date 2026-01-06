@@ -142,12 +142,14 @@ for {
 }
 ```
 
-## 多路复用（降低后续连接 RTT）
-当开启 HTTP mask（尤其是 `stream`/`poll`）时，可通过多路复用复用单条隧道连接，后续每次 Dial 仅创建逻辑流（减少 RTT 与连接抖动）。
+## HTTP 连接复用（HTTP/1.1 keep-alive / HTTP/2）
+当开启 HTTP mask（`stream` / `poll` / `auto`）时，设置 `HTTPMaskMultiplex="auto"` 会复用底层 HTTP 连接：
+- HTTP/1.1：keep-alive 复用连接池
+- HTTPS + HTTP/2：同一条 h2 连接可并发承载多条隧道（多路复用）
 
-客户端（建立一条复用会话，然后多次 Dial）：
+示例（每次 Dial 仍会做一次 Sudoku 握手，但可复用 TCP/TLS 连接）：
 ```go
-sess, err := apis.DialMultiplex(ctx, &apis.ProtocolConfig{
+base := &apis.ProtocolConfig{
 	ServerAddress:      "your.domain.com:443",
 	Key:                "shared-key-hex-or-plain",
 	AEADMethod:         "chacha20-poly1305",
@@ -158,59 +160,38 @@ sess, err := apis.DialMultiplex(ctx, &apis.ProtocolConfig{
 	DisableHTTPMask:    false,
 	HTTPMaskMode:       "auto",
 	HTTPMaskTLSEnabled: true,
-})
-if err != nil {
-	log.Fatal(err)
+	HTTPMaskMultiplex:  "auto",
 }
-defer sess.Close()
 
-c1, _ := sess.Dial(ctx, "example.com:443")
+cfg := *base
+cfg.TargetAddress = "example.com:443"
+c1, _ := apis.Dial(ctx, &cfg)
 defer c1.Close()
 ```
 
-服务端（握手后判断是否为复用连接；复用流内仍使用目标地址前置帧）：
+## 单 tunnel 多目标（MuxClient）
+当需要真正省掉后续“建 tunnel/握手”的 RTT（单条隧道内并发多目标连接），使用 `apis.NewMuxClient`：
+
 ```go
-tunnel, userHash, fail, err := apis.ServerHandshakeFlexibleWithUserHash(rawConn, cfg)
-if err != nil {
-	log.Println(fail(err))
-	return
+base := &apis.ProtocolConfig{
+	ServerAddress:      "your.domain.com:443",
+	Key:                "shared-key-hex-or-plain",
+	AEADMethod:         "chacha20-poly1305",
+	Table:              table,
+	PaddingMin:         5,
+	PaddingMax:         15,
+	EnablePureDownlink: true,
+	DisableHTTPMask:    false,
+	HTTPMaskMode:       "auto",
+	HTTPMaskTLSEnabled: true,
+	HTTPMaskMultiplex:  "on",
 }
 
-peek := make([]byte, 1)
-if _, err := io.ReadFull(tunnel, peek); err != nil {
-	_ = tunnel.Close()
-	return
-}
+mux, _ := apis.NewMuxClient(base)
+defer mux.Close()
 
-if peek[0] == apis.MultiplexMagicByte {
-	mux, err := apis.AcceptMultiplexServer(tunnel)
-	if err != nil {
-		_ = tunnel.Close()
-		return
-	}
-	defer mux.Close()
-
-	for {
-		stream, target, err := mux.AcceptTCP()
-		if err != nil {
-			return
-		}
-		go func(s net.Conn, dst string) {
-			defer s.Close()
-			_ = userHash
-			// dial dst, then io.Copy both ways...
-		}(stream, target)
-	}
-}
-
-// 非复用：把预读的 1 字节放回去，再按旧流程读 target
-tuned := apis.NewPreBufferedConn(tunnel, peek)
-target, err := apis.ReadTargetAddress(tuned)
-if err != nil {
-	_ = tunnel.Close()
-	return
-}
-_ = target
+c1, _ := mux.Dial(ctx, "example.com:443")
+defer c1.Close()
 ```
 
 ## 说明

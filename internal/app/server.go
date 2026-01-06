@@ -13,7 +13,6 @@ import (
 	"github.com/saba-futai/sudoku/internal/handler"
 	"github.com/saba-futai/sudoku/internal/protocol"
 	"github.com/saba-futai/sudoku/internal/tunnel"
-	"github.com/saba-futai/sudoku/pkg/multiplex"
 	"github.com/saba-futai/sudoku/pkg/obfs/httpmask"
 	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
 )
@@ -118,38 +117,14 @@ func handleSudokuServerConn(handshakeConn net.Conn, rawConn net.Conn, cfg *confi
 		return
 	}
 
-	// Multiplex session: one tunnel carries multiple target streams.
-	if firstByte[0] == multiplex.MagicByte {
-		v, err := multiplex.ReadVersion(tunnelConn)
-		if err != nil {
-			log.Printf("[Server][MUX] read version failed: %v", err)
-			return
-		}
-		if err := multiplex.ValidateVersion(v); err != nil {
-			log.Printf("[Server][MUX] %v", err)
-			return
-		}
-
-		sess, err := multiplex.NewServerSession(tunnelConn)
-		if err != nil {
-			log.Printf("[Server][MUX] start session failed: %v", err)
-			return
-		}
-		defer sess.Close()
-
+	if firstByte[0] == tunnel.MuxMagicByte {
 		if userHash != "" {
-			log.Printf("[Server][MUX][User:%s] session start", userHash)
-		} else {
-			log.Printf("[Server][MUX] session start")
+			log.Printf("[Server][Mux][User:%s] session start", userHash)
 		}
-
-		for {
-			stream, err := sess.AcceptStream()
-			if err != nil {
-				return
-			}
-			go handleSudokuServerStream(stream, userHash)
+		if err := tunnel.HandleMuxServer(tunnelConn); err != nil {
+			log.Printf("[Server][Mux] session ended: %v", err)
 		}
+		return
 	}
 
 	// 非 UoT：将预读的字节放回流中以兼容旧协议
@@ -178,42 +153,4 @@ func handleSudokuServerConn(handshakeConn net.Conn, rawConn net.Conn, cfg *confi
 	// 6. 转发数据
 	// ==========================================
 	pipeConn(prefixedConn, target)
-}
-
-func handleSudokuServerStream(stream net.Conn, userHash string) {
-	defer stream.Close()
-
-	firstByte := make([]byte, 1)
-	if _, err := io.ReadFull(stream, firstByte); err != nil {
-		return
-	}
-
-	if firstByte[0] == tunnel.UoTMagicByte {
-		if userHash != "" {
-			log.Printf("[Server][MUX][UoT][User:%s] session start", userHash)
-		}
-		if err := tunnel.HandleUoTServer(stream); err != nil {
-			log.Printf("[Server][MUX][UoT] session ended: %v", err)
-		}
-		return
-	}
-
-	prefixed := tunnel.NewPreBufferedConn(stream, firstByte)
-	destAddrStr, _, _, err := protocol.ReadAddress(prefixed)
-	if err != nil {
-		return
-	}
-
-	if userHash != "" {
-		log.Printf("[Server][MUX][User:%s] Connecting to %s", userHash, destAddrStr)
-	} else {
-		log.Printf("[Server][MUX] Connecting to %s", destAddrStr)
-	}
-
-	target, err := net.DialTimeout("tcp", destAddrStr, 10*time.Second)
-	if err != nil {
-		log.Printf("[Server][MUX] Connect target failed: %v", err)
-		return
-	}
-	pipeConn(prefixed, target)
 }

@@ -153,6 +153,7 @@ func establishBaseConn(ctx context.Context, cfg *ProtocolConfig, validate func(*
 				Mode:         cfg.HTTPMaskMode,
 				TLSEnabled:   cfg.HTTPMaskTLSEnabled,
 				HostOverride: cfg.HTTPMaskHost,
+				Multiplex:    cfg.HTTPMaskMultiplex,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("dial http tunnel failed: %w", err)

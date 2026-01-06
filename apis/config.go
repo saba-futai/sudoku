@@ -119,13 +119,10 @@ type ProtocolConfig struct {
 	// When empty, it is derived from ServerAddress.
 	HTTPMaskHost string
 
-	// HTTPMaskMultiplex controls whether the client reuses a single (HTTP-masked) tunnel connection and
-	// opens multiple logical target streams inside it (reduces RTT for subsequent connections).
-	// Values: "off" / "auto" / "on".
-	//
-	// Notes:
-	//   - This flag is only used by the multiplex helpers (see DialMultiplex).
-	//   - Servers can remain backward compatible: non-mux clients are still supported.
+	// HTTPMaskMultiplex controls multiplex behavior when HTTPMask tunnel modes are enabled:
+	//   - "off": disable reuse; each Dial establishes its own HTTPMask tunnel
+	//   - "auto": reuse underlying HTTP connections across multiple tunnel dials (HTTP/1.1 keep-alive / HTTP/2)
+	//   - "on": enable "single tunnel, multi-target" mux when using apis.NewMuxClient (Dial behaves like "auto")
 	HTTPMaskMultiplex string
 }
 

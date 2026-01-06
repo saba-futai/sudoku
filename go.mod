@@ -5,7 +5,6 @@ go 1.24.7
 require (
 	filippo.io/edwards25519 v1.1.0
 	github.com/charmbracelet/huh v0.8.0
-	github.com/xtaci/smux v1.5.50
 	golang.org/x/crypto v0.45.0
 	golang.org/x/term v0.38.0
 	gopkg.in/yaml.v3 v3.0.1

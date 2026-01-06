@@ -132,7 +132,7 @@ func TestHTTPProxy_Multiplex_LargeDownloads(t *testing.T) {
 		Transport: &http.Transport{
 			Proxy:              http.ProxyURL(proxyURL),
 			DisableCompression: true,
-			DisableKeepAlives:  true, // force a new upstream dial per request -> stresses mux stream creation
+			DisableKeepAlives:  true, // force a new upstream dial per request -> stresses HTTPMask tunnel dials + underlying HTTP reuse
 		},
 		Timeout: 90 * time.Second,
 	}

@@ -58,6 +58,7 @@ func (d *BaseDialer) dialBase() (net.Conn, error) {
 				Mode:         d.Config.HTTPMaskMode,
 				TLSEnabled:   d.Config.HTTPMaskTLS,
 				HostOverride: d.Config.HTTPMaskHost,
+				Multiplex:    d.Config.HTTPMaskMultiplex,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("dial http tunnel failed: %w", err)

@@ -47,6 +47,15 @@ func normalizeTunnelMode(mode string) TunnelMode {
 	}
 }
 
+func multiplexEnabled(mode string) bool {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case "", "auto", "on":
+		return true
+	default:
+		return false
+	}
+}
+
 type HandleResult int
 
 const (
@@ -59,6 +68,9 @@ type TunnelDialOptions struct {
 	Mode         string
 	TLSEnabled   bool   // when true, use HTTPS; when false, use HTTP (no port-based inference)
 	HostOverride string // optional Host header / SNI host (without scheme); port inferred from ServerAddress
+	// Multiplex controls whether DialTunnel reuses underlying HTTP connections (keep-alive / h2).
+	// Values: "off" disables global reuse; "auto"/"on" enables it. Empty defaults to "auto".
+	Multiplex string
 }
 
 // DialTunnel establishes a bidirectional stream over HTTP:
@@ -237,7 +249,7 @@ func dialStreamOne(ctx context.Context, serverAddress string, opts TunnelDialOpt
 	req.Header.Set("X-Sudoku-Tunnel", string(TunnelModeStream))
 	req.Header.Set("X-Sudoku-Version", "1")
 
-	client := newHTTPClient(urlHost, dialAddr, serverName, scheme, 32)
+	client := newHTTPClient(urlHost, dialAddr, serverName, scheme, 32, multiplexEnabled(opts.Multiplex))
 
 	type doResult struct {
 		resp *http.Response
@@ -408,22 +420,14 @@ var (
 	transportPool = make(map[transportKey]*http.Transport)
 )
 
-func newHTTPClient(urlHost, dialAddr, serverName, scheme string, maxIdleConns int) *http.Client {
-	key := transportKey{
-		scheme:     scheme,
-		urlHost:    urlHost,
-		dialAddr:   dialAddr,
-		serverName: serverName,
-	}
-
-	transportMu.Lock()
-	transport := transportPool[key]
-	if transport == nil {
-		transport = &http.Transport{
+func newHTTPClient(urlHost, dialAddr, serverName, scheme string, maxIdleConns int, reuseTransport bool) *http.Client {
+	build := func() *http.Transport {
+		transport := &http.Transport{
 			Proxy:                 http.ProxyFromEnvironment,
 			ForceAttemptHTTP2:     scheme == "https",
 			DisableCompression:    true,
 			MaxIdleConns:          maxIdleConns,
+			MaxIdleConnsPerHost:   maxIdleConns,
 			IdleConnTimeout:       30 * time.Second,
 			ResponseHeaderTimeout: 20 * time.Second,
 			TLSHandshakeTimeout:   10 * time.Second,
@@ -441,6 +445,24 @@ func newHTTPClient(urlHost, dialAddr, serverName, scheme string, maxIdleConns in
 				MinVersion: tls.VersionTLS12,
 			}
 		}
+		return transport
+	}
+
+	if !reuseTransport {
+		return &http.Client{Transport: build()}
+	}
+
+	key := transportKey{
+		scheme:     scheme,
+		urlHost:    urlHost,
+		dialAddr:   dialAddr,
+		serverName: serverName,
+	}
+
+	transportMu.Lock()
+	transport := transportPool[key]
+	if transport == nil {
+		transport = build()
 		transportPool[key] = transport
 	}
 	transportMu.Unlock()
@@ -455,7 +477,7 @@ func dialSession(ctx context.Context, serverAddress string, opts TunnelDialOptio
 	}
 	headerHost := canonicalHeaderHost(urlHost, scheme)
 
-	client := newHTTPClient(urlHost, dialAddr, serverName, scheme, 32)
+	client := newHTTPClient(urlHost, dialAddr, serverName, scheme, 32, multiplexEnabled(opts.Multiplex))
 
 	authorizeURL := (&url.URL{Scheme: scheme, Host: urlHost, Path: "/session"}).String()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, authorizeURL, nil)

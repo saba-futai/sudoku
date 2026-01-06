@@ -106,7 +106,8 @@ Change `mode` to `client`, set `server_address` to the Server IP, set `local_por
 To run behind a CDN/proxy (e.g., Cloudflare orange-cloud), set:
 - `"disable_http_mask": false`
 - `"http_mask_mode": "auto"` (or `"stream"` / `"poll"`)
-- `"http_mask_multiplex": "auto"` (reuse one tunnel connection for multiple target streams)
+- `"http_mask_multiplex": "auto"` (reuse underlying HTTP connections across multiple tunnel dials; HTTP/2 can multiplex multiple tunnels on one connection)
+- `"http_mask_multiplex": "on"` (single tunnel, multi-target mux inside one HTTPMask tunnel; reduces per-connection RTT further)
 - client-side `server_address` can be a domain (e.g., `"example.com:443"`); set `"http_mask_tls": true` to use HTTPS (no port-based inference).
 
 **Note**: The Key must be generated specifically by Sudoku.
