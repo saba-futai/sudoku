@@ -296,37 +296,77 @@ func dialStreamOne(ctx context.Context, serverAddress string, opts TunnelDialOpt
 		doCh <- doResult{resp: resp, err: doErr}
 	}()
 
-	outConn := net.Conn(streamConn)
-	if opts.Upgrade != nil {
-		upgradeConn, err := opts.Upgrade(streamConn)
-		if err != nil {
-			_ = outConn.Close()
-			return nil, err
-		}
-		if upgradeConn != nil {
-			outConn = upgradeConn
+	type upgradeResult struct {
+		conn net.Conn
+		err  error
+	}
+	upgradeCh := make(chan upgradeResult, 1)
+	if opts.Upgrade == nil {
+		upgradeCh <- upgradeResult{conn: streamConn, err: nil}
+	} else {
+		go func() {
+			upgradeConn, err := opts.Upgrade(streamConn)
+			if err != nil {
+				upgradeCh <- upgradeResult{conn: nil, err: err}
+				return
+			}
+			if upgradeConn == nil {
+				upgradeConn = streamConn
+			}
+			upgradeCh <- upgradeResult{conn: upgradeConn, err: nil}
+		}()
+	}
+
+	var (
+		outConn       net.Conn
+		upgradeDone   bool
+		responseReady bool
+	)
+
+	for !(upgradeDone && responseReady) {
+		select {
+		case <-ctx.Done():
+			_ = streamConn.Close()
+			if outConn != nil && outConn != streamConn {
+				_ = outConn.Close()
+			}
+			return nil, ctx.Err()
+
+		case u := <-upgradeCh:
+			if u.err != nil {
+				_ = streamConn.Close()
+				return nil, u.err
+			}
+			outConn = u.conn
+			if outConn == nil {
+				outConn = streamConn
+			}
+			upgradeDone = true
+
+		case r := <-doCh:
+			if r.err != nil {
+				_ = streamConn.Close()
+				if outConn != nil && outConn != streamConn {
+					_ = outConn.Close()
+				}
+				return nil, r.err
+			}
+			if r.resp.StatusCode != http.StatusOK {
+				body, _ := io.ReadAll(io.LimitReader(r.resp.Body, 4*1024))
+				_ = r.resp.Body.Close()
+				_ = streamConn.Close()
+				if outConn != nil && outConn != streamConn {
+					_ = outConn.Close()
+				}
+				return nil, fmt.Errorf("stream bad status: %s (%s)", r.resp.Status, strings.TrimSpace(string(body)))
+			}
+
+			streamConn.reader = r.resp.Body
+			responseReady = true
 		}
 	}
 
-	select {
-	case <-ctx.Done():
-		_ = outConn.Close()
-		return nil, ctx.Err()
-	case r := <-doCh:
-		if r.err != nil {
-			_ = outConn.Close()
-			return nil, r.err
-		}
-		if r.resp.StatusCode != http.StatusOK {
-			defer r.resp.Body.Close()
-			body, _ := io.ReadAll(io.LimitReader(r.resp.Body, 4*1024))
-			_ = outConn.Close()
-			return nil, fmt.Errorf("stream bad status: %s (%s)", r.resp.Status, strings.TrimSpace(string(body)))
-		}
-
-		streamConn.reader = r.resp.Body
-		return outConn, nil
-	}
+	return outConn, nil
 }
 
 type queuedConn struct {

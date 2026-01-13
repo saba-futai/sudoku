@@ -371,3 +371,41 @@ func TestPollConn_CloseWrite_NoPanic(t *testing.T) {
 	_ = c.Close()
 	wg.Wait()
 }
+
+func TestDialStreamOne_UpgradeHonorsContextCancel(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	defer ln.Close()
+
+	holdConn := make(chan struct{})
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		<-holdConn
+		_ = conn.Close()
+	}()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	_, err = dialStreamOne(ctx, ln.Addr().String(), TunnelDialOptions{
+		TLSEnabled: true,
+		Upgrade: func(raw net.Conn) (net.Conn, error) {
+			_, werr := raw.Write([]byte("x"))
+			return raw, werr
+		},
+	})
+	close(holdConn)
+
+	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("expected context deadline exceeded, got %v", err)
+	}
+	if took := time.Since(start); took > 2*time.Second {
+		t.Fatalf("dialStreamOne took too long: %s", took)
+	}
+}

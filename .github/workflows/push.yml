@@ -45,7 +45,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          FLAGS="-count=1 -shuffle=on"
+          FLAGS="-count=1 -shuffle=on -v"
           if [ "${{ matrix.race }}" = "true" ]; then
             FLAGS="$FLAGS -race"
           fi
