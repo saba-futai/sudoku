@@ -1,4 +1,3 @@
-// pkg/obfs/sudoku/conn.go
 package sudoku
 
 import (

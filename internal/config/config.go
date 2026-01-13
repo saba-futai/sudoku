@@ -1,4 +1,3 @@
-// internal/config/config.go
 package config
 
 type Config struct {
@@ -31,6 +30,9 @@ type Config struct {
 	// HTTPMaskHost optionally overrides the HTTP Host header / SNI host for HTTP tunnel modes (client-side).
 	// When empty, it is derived from ServerAddress.
 	HTTPMaskHost string `json:"http_mask_host"`
+	// HTTPMaskPathRoot optionally prefixes all HTTP mask paths with a first-level segment.
+	// Example: "aabbcc" => "/aabbcc/session", "/aabbcc/api/v1/upload", ...
+	HTTPMaskPathRoot string `json:"path_root"`
 	// HTTPMaskMultiplex controls how connections are multiplexed when HTTPMask tunnel modes are enabled:
 	//   - "off": disable reuse; each target dials its own HTTPMask tunnel
 	//   - "auto": reuse underlying HTTP connections across multiple tunnel dials (HTTP/1.1 keep-alive / HTTP/2)

@@ -24,6 +24,7 @@ import (
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/binary"
+	"encoding/hex"
 	"fmt"
 	"net"
 	"strings"
@@ -36,84 +37,47 @@ import (
 	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
 )
 
-// Dial 建立一条到 Sudoku 服务器的隧道，并请求连接到 cfg.TargetAddress
-//
-// 参数:
-//   - ctx: 用于控制连接建立的上下文（可以设置超时或取消）
-//   - cfg: 协议配置，必须包含 Table、Key、ServerAddress、TargetAddress 等字段
-//
-// 返回值:
-//   - net.Conn: 已经完成握手的加密隧道连接，可直接用于应用层数据传输
-//   - error: 任何阶段失败都会返回错误
-//
-// 协议流程:
-//  1. 建立到服务器的 TCP 连接
-//  2. 发送 HTTP POST 伪装头
-//  3. 包装 Sudoku 混淆层
-//  4. 包装 AEAD 加密层
-//  5. 发送握手数据（时间戳 + 随机数）
-//  6. 发送目标地址
-//
-// 错误条件:
-//   - TCP 连接失败
-//   - 配置参数无效 (Table 为 nil 等)
-//   - 写入 HTTP 伪装头失败
-//   - 加密层初始化失败
-//   - 握手数据发送失败
-//   - 目标地址发送失败
-//
-// 使用示例:
-//
-//	cfg := &ProtocolConfig{
-//	    ServerAddress: "0.0.0.0:8443",
-//	    TargetAddress: "google.com:443",
-//	    Key:           "my-secret-key",
-//	    AEADMethod:    "chacha20-poly1305",
-//	    Table:         sudoku.NewTableWithCustom("my-seed", "prefer_entropy", "xpxvvpvv"),
-//	    PaddingMin:    10,
-//	    PaddingMax:    30,
-//	}
-//
-//	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-//	defer cancel()
-//
-//	conn, err := apis.Dial(ctx, cfg)
-//	if err != nil {
-//	    log.Fatal(err)
-//	}
-//	defer conn.Close()
-//
-//	// 现在可以直接使用 conn 进行读写
-//	conn.Write([]byte("Hello"))
+func canonicalCryptoSeedKey(key string) string {
+	if recoveredFromKey, err := crypto.RecoverPublicKey(key); err == nil {
+		return crypto.EncodePoint(recoveredFromKey)
+	}
+	return key
+}
+
 func buildHandshakePayload(key string) [16]byte {
 	var payload [16]byte
 	binary.BigEndian.PutUint64(payload[:8], uint64(time.Now().Unix()))
-	hash := sha256.Sum256([]byte(key))
+	src := []byte(key)
+	if _, err := crypto.RecoverPublicKey(key); err == nil {
+		if keyBytes, decErr := hex.DecodeString(key); decErr == nil && len(keyBytes) > 0 {
+			src = keyBytes
+		}
+	}
+	hash := sha256.Sum256(src)
 	copy(payload[8:], hash[:8])
 	return payload
 }
 
-func pickClientTable(cfg *ProtocolConfig) (*sudoku.Table, byte, error) {
+func pickClientTable(cfg *ProtocolConfig) (*sudoku.Table, error) {
 	candidates := cfg.tableCandidates()
 	if len(candidates) == 0 {
-		return nil, 0, fmt.Errorf("no table configured")
+		return nil, fmt.Errorf("no table configured")
 	}
 	if len(candidates) == 1 {
-		return candidates[0], 0, nil
+		return candidates[0], nil
 	}
 	var b [1]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return nil, 0, fmt.Errorf("random table pick failed: %w", err)
+		return nil, fmt.Errorf("random table pick failed: %w", err)
 	}
 	idx := int(b[0]) % len(candidates)
-	return candidates[idx], byte(idx), nil
+	return candidates[idx], nil
 }
 
-func wrapClientConn(rawConn net.Conn, cfg *ProtocolConfig, table *sudoku.Table) (net.Conn, error) {
+func wrapClientConn(rawConn net.Conn, cfg *ProtocolConfig, table *sudoku.Table, seed string) (net.Conn, error) {
 	obfsConn := buildClientObfsConn(rawConn, cfg, table)
-	seed := cfg.Key
-	if recoveredFromKey, err := crypto.RecoverPublicKey(cfg.Key); err == nil {
-		seed = crypto.EncodePoint(recoveredFromKey)
+	if strings.TrimSpace(seed) == "" {
+		seed = cfg.Key
 	}
 	cConn, err := crypto.NewAEADConn(obfsConn, seed, cfg.AEADMethod)
 	if err != nil {
@@ -123,75 +87,78 @@ func wrapClientConn(rawConn net.Conn, cfg *ProtocolConfig, table *sudoku.Table) 
 	return cConn, nil
 }
 
+// Dial opens a Sudoku tunnel to cfg.ServerAddress and requests cfg.TargetAddress.
 func Dial(ctx context.Context, cfg *ProtocolConfig) (net.Conn, error) {
-	baseConn, err := establishBaseConn(ctx, cfg, func(c *ProtocolConfig) error { return c.ValidateClient() })
+	baseConn, err := establishBaseConn(ctx, cfg, func(c *ProtocolConfig) error { return c.ValidateClient() }, func(conn net.Conn) error {
+		if err := protocol.WriteAddress(conn, cfg.TargetAddress); err != nil {
+			return fmt.Errorf("send target address failed: %w", err)
+		}
+		return nil
+	})
 	if err != nil {
 		return nil, err
-	}
-
-	if err := protocol.WriteAddress(baseConn, cfg.TargetAddress); err != nil {
-		baseConn.Close()
-		return nil, fmt.Errorf("send target address failed: %w", err)
 	}
 
 	return baseConn, nil
 }
 
-func establishBaseConn(ctx context.Context, cfg *ProtocolConfig, validate func(*ProtocolConfig) error) (net.Conn, error) {
+func establishBaseConn(ctx context.Context, cfg *ProtocolConfig, validate func(*ProtocolConfig) error, postHandshake func(net.Conn) error) (net.Conn, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("config is required")
 	}
 	if err := validate(cfg); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
+	seed := canonicalCryptoSeedKey(cfg.Key)
 
 	// CDN-capable HTTP tunnel modes.
 	if !cfg.DisableHTTPMask {
 		switch strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMode)) {
 		case "stream", "poll", "auto":
-			rawConn, err := httpmask.DialTunnel(ctx, cfg.ServerAddress, httpmask.TunnelDialOptions{
+			table, err := pickClientTable(cfg)
+			if err != nil {
+				return nil, err
+			}
+
+			conn, err := httpmask.DialTunnel(ctx, cfg.ServerAddress, httpmask.TunnelDialOptions{
 				Mode:         cfg.HTTPMaskMode,
 				TLSEnabled:   cfg.HTTPMaskTLSEnabled,
 				HostOverride: cfg.HTTPMaskHost,
-				Multiplex:    cfg.HTTPMaskMultiplex,
+				PathRoot:     cfg.HTTPMaskPathRoot,
+				AuthKey:      seed,
+				Upgrade: func(rawConn net.Conn) (net.Conn, error) {
+					cConn, err := wrapClientConn(rawConn, cfg, table, seed)
+					if err != nil {
+						return nil, err
+					}
+
+					handshake := buildHandshakePayload(cfg.Key)
+					if _, err := cConn.Write(handshake[:]); err != nil {
+						_ = cConn.Close()
+						return nil, fmt.Errorf("send handshake failed: %w", err)
+					}
+
+					if _, err := cConn.Write([]byte{downlinkMode(cfg)}); err != nil {
+						_ = cConn.Close()
+						return nil, fmt.Errorf("send downlink mode failed: %w", err)
+					}
+
+					if postHandshake != nil {
+						if err := postHandshake(cConn); err != nil {
+							_ = cConn.Close()
+							return nil, err
+						}
+					}
+
+					return cConn, nil
+				},
+				Multiplex: cfg.HTTPMaskMultiplex,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("dial http tunnel failed: %w", err)
 			}
 
-			success := false
-			defer func() {
-				if !success {
-					rawConn.Close()
-				}
-			}()
-
-			table, tableID, err := pickClientTable(cfg)
-			if err != nil {
-				return nil, err
-			}
-
-			cConn, err := wrapClientConn(rawConn, cfg, table)
-			if err != nil {
-				return nil, err
-			}
-
-			handshake := buildHandshakePayload(cfg.Key)
-			if len(cfg.tableCandidates()) > 1 {
-				handshake[8] = tableID
-			}
-			if _, err := cConn.Write(handshake[:]); err != nil {
-				cConn.Close()
-				return nil, fmt.Errorf("send handshake failed: %w", err)
-			}
-
-			if _, err := cConn.Write([]byte{downlinkMode(cfg)}); err != nil {
-				cConn.Close()
-				return nil, fmt.Errorf("send downlink mode failed: %w", err)
-			}
-
-			success = true
-			return cConn, nil
+			return conn, nil
 		}
 	}
 
@@ -214,25 +181,22 @@ func establishBaseConn(ctx context.Context, cfg *ProtocolConfig, validate func(*
 	}()
 
 	if !cfg.DisableHTTPMask {
-		if err := httpmask.WriteRandomRequestHeader(rawConn, cfg.ServerAddress); err != nil {
+		if err := httpmask.WriteRandomRequestHeaderWithPathRoot(rawConn, cfg.ServerAddress, cfg.HTTPMaskPathRoot); err != nil {
 			return nil, fmt.Errorf("write http mask failed: %w", err)
 		}
 	}
 
-	table, tableID, err := pickClientTable(cfg)
+	table, err := pickClientTable(cfg)
 	if err != nil {
 		return nil, err
 	}
 
-	cConn, err := wrapClientConn(rawConn, cfg, table)
+	cConn, err := wrapClientConn(rawConn, cfg, table, seed)
 	if err != nil {
 		return nil, err
 	}
 
 	handshake := buildHandshakePayload(cfg.Key)
-	if len(cfg.tableCandidates()) > 1 {
-		handshake[8] = tableID
-	}
 	if _, err := cConn.Write(handshake[:]); err != nil {
 		cConn.Close()
 		return nil, fmt.Errorf("send handshake failed: %w", err)
@@ -241,6 +205,13 @@ func establishBaseConn(ctx context.Context, cfg *ProtocolConfig, validate func(*
 	if _, err := cConn.Write([]byte{downlinkMode(cfg)}); err != nil {
 		cConn.Close()
 		return nil, fmt.Errorf("send downlink mode failed: %w", err)
+	}
+
+	if postHandshake != nil {
+		if err := postHandshake(cConn); err != nil {
+			_ = cConn.Close()
+			return nil, err
+		}
 	}
 
 	success = true

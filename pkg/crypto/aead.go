@@ -1,4 +1,3 @@
-// pkg/crypto/aead.go
 package crypto
 
 import (

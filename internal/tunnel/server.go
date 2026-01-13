@@ -3,8 +3,8 @@ package tunnel
 import (
 	"bufio"
 	"bytes"
-	"encoding/hex"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -115,8 +115,8 @@ func HandshakeAndUpgrade(rawConn net.Conn, cfg *config.Config, table *sudoku.Tab
 
 // HandshakeMeta carries optional, per-connection identity hints extracted from the client handshake.
 //
-// UserHash is a hex-encoded 7-byte value derived from the client's private key (when the client uses one):
-// sha256(privateKey)[1:8]. For clients without a private key, it is derived from the handshake nonce bytes.
+// UserHash is a hex-encoded 8-byte value derived from the client's private key (when the client uses one):
+// sha256(privateKey)[:8]. For clients without a private key, it is derived from the handshake nonce bytes.
 type HandshakeMeta struct {
 	UserHash string
 }
@@ -125,8 +125,7 @@ func userHashFromHandshake(handshakeBuf []byte) string {
 	if len(handshakeBuf) < 16 {
 		return ""
 	}
-	// handshake[8] may be a table ID in some clients; use [9:16] as "hash1:8".
-	return hex.EncodeToString(handshakeBuf[9:16])
+	return hex.EncodeToString(handshakeBuf[8:16])
 }
 
 type recordedConn struct {

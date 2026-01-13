@@ -22,8 +22,8 @@ package apis
 import (
 	"bufio"
 	"bytes"
-	"encoding/hex"
 	"encoding/binary"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
@@ -192,7 +192,7 @@ func ServerHandshake(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, string, e
 }
 
 // ServerHandshakeWithUserHash is like ServerHandshake but also returns a stable per-user identifier extracted
-// from the client handshake: hex(sha256(privateKey)[1:8]) for official clients using split private keys.
+// from the client handshake: hex(sha256(privateKey)[:8]) for official clients using split private keys.
 func ServerHandshakeWithUserHash(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, string, string, error) {
 	if cfg == nil {
 		return nil, "", "", fmt.Errorf("config is required")
@@ -291,8 +291,7 @@ func userHashFromHandshake(handshakeBuf []byte) string {
 	if len(handshakeBuf) < 16 {
 		return ""
 	}
-	// handshake[8] may be a table ID in some clients; use [9:16] as "hash1:8".
-	return hex.EncodeToString(handshakeBuf[9:16])
+	return hex.EncodeToString(handshakeBuf[8:16])
 }
 
 func serverHandshakeCore(rawConn net.Conn, cfg *ProtocolConfig) (net.Conn, func(error) error, error) {

@@ -38,7 +38,11 @@ func NewHTTPMaskTunnelServer(cfg *ProtocolConfig) *HTTPMaskTunnelServer {
 	if !cfg.DisableHTTPMask {
 		switch strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMode)) {
 		case "stream", "poll", "auto":
-			ts = httpmask.NewTunnelServer(httpmask.TunnelServerOptions{Mode: cfg.HTTPMaskMode})
+			ts = httpmask.NewTunnelServer(httpmask.TunnelServerOptions{
+				Mode:     cfg.HTTPMaskMode,
+				PathRoot: cfg.HTTPMaskPathRoot,
+				AuthKey:  cfg.Key,
+			})
 		}
 	}
 

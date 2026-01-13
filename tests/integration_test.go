@@ -187,7 +187,8 @@ func analyzeTraffic(data []byte) TrafficStats {
 	var stats TrafficStats
 	stats.TotalBytes = int64(len(data))
 	for _, b := range data {
-		if b >= 32 && b <= 127 {
+		// "prefer_ascii" intentionally maps the single non-printable marker (0x7F) to '\n'.
+		if b == '\n' || (b >= 32 && b <= 126) {
 			stats.AsciiCount++
 		}
 		stats.HammingTotal += int64(bits.OnesCount8(b))

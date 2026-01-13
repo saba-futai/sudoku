@@ -114,7 +114,7 @@ func (c *MuxClient) getOrCreateMux(ctx context.Context) (*tunnel.MuxClient, erro
 	}
 	c.mu.Unlock()
 
-	baseConn, err := establishBaseConn(ctx, c.cfg, func(cfg *ProtocolConfig) error { return cfg.Validate() })
+	baseConn, err := establishBaseConn(ctx, c.cfg, func(cfg *ProtocolConfig) error { return cfg.Validate() }, nil)
 	if err != nil {
 		c.mu.Lock()
 		c.creating = false

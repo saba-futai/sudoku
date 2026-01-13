@@ -1,6 +1,7 @@
 package config
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -59,5 +60,47 @@ func TestLoadRejectsPackedWithoutAEAD(t *testing.T) {
 
 	if _, err := Load(path); err == nil {
 		t.Fatalf("expected error when packed downlink used without AEAD")
+	}
+}
+
+func TestLoadPathRootCompat(t *testing.T) {
+	t.Parallel()
+
+	cases := []struct {
+		name        string
+		configKey   string
+		expectValue string
+	}{
+		{name: "new", configKey: "path_root", expectValue: "aabbcc"},
+		{name: "legacy", configKey: "http_mask_path_root", expectValue: "aabbcc"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tmpDir := t.TempDir()
+			path := filepath.Join(tmpDir, "cfg.json")
+
+			data := fmt.Sprintf(`{
+				"mode": "client",
+				"local_port": 8080,
+				"server_address": "1.1.1.1:443",
+				"key": "k",
+				"aead": "none",
+				"%s": "%s",
+				"rule_urls": ["global"]
+			}`, tc.configKey, tc.expectValue)
+
+			if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
+				t.Fatalf("write file: %v", err)
+			}
+
+			cfg, err := Load(path)
+			if err != nil {
+				t.Fatalf("Load error: %v", err)
+			}
+			if cfg.HTTPMaskPathRoot != tc.expectValue {
+				t.Fatalf("HTTPMaskPathRoot mismatch: got %q want %q", cfg.HTTPMaskPathRoot, tc.expectValue)
+			}
+		})
 	}
 }

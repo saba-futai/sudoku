@@ -16,7 +16,7 @@ import (
 // Wire format:
 //   - [MuxMagicByte][muxVersion] (magic is consumed by caller; this function reads the version)
 //   - then mux frames (open/data/close/reset)
-func HandleMuxServer(conn net.Conn) error {
+func HandleMuxServer(conn net.Conn, onConnect func(targetAddr string)) error {
 	if conn == nil {
 		return fmt.Errorf("nil conn")
 	}
@@ -37,6 +37,9 @@ func HandleMuxServer(conn net.Conn) error {
 			stream.closeNoSend(err)
 			sess.removeStream(stream.id)
 			return
+		}
+		if onConnect != nil {
+			onConnect(addr)
 		}
 
 		target, err := net.DialTimeout("tcp", addr, 10*time.Second)

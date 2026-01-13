@@ -1,4 +1,3 @@
-// pkg/obfs/httpmask/masker.go
 package httpmask
 
 import (
@@ -130,11 +129,17 @@ func appendCommonHeaders(buf []byte, host string, r *rand.Rand) []byte {
 
 // WriteRandomRequestHeader writes a plausible HTTP/1.1 request header as a mask.
 func WriteRandomRequestHeader(w io.Writer, host string) error {
+	return WriteRandomRequestHeaderWithPathRoot(w, host, "")
+}
+
+// WriteRandomRequestHeaderWithPathRoot is like WriteRandomRequestHeader but prefixes all paths with pathRoot
+// (a single segment such as "aabbcc" => "/aabbcc/...").
+func WriteRandomRequestHeaderWithPathRoot(w io.Writer, host string, pathRoot string) error {
 	// Get RNG from pool
 	r := rngPool.Get().(*rand.Rand)
 	defer rngPool.Put(r)
 
-	path := paths[r.Intn(len(paths))]
+	path := joinPathRoot(pathRoot, paths[r.Intn(len(paths))])
 	ctype := contentTypes[r.Intn(len(contentTypes))]
 
 	// Use buffer pool

@@ -1,4 +1,3 @@
-// internal/app/client.go
 package app
 
 import (
@@ -90,21 +89,6 @@ func (d *DNSCache) Set(host string, ip net.IP) {
 	})
 }
 
-func buildTablesFromConfig(cfg *config.Config) ([]*sudoku.Table, error) {
-	patterns := cfg.CustomTables
-	if len(patterns) == 0 && strings.TrimSpace(cfg.CustomTable) != "" {
-		patterns = []string{cfg.CustomTable}
-	}
-	if len(patterns) == 0 {
-		patterns = []string{""}
-	}
-	tableSet, err := sudoku.NewTableSet(cfg.Key, cfg.ASCII, patterns)
-	if err != nil {
-		return nil, err
-	}
-	return tableSet.Candidates(), nil
-}
-
 func RunClient(cfg *config.Config, tables []*sudoku.Table) {
 	// 1. Initialize Dialer
 	var dialer tunnel.Dialer
@@ -118,10 +102,10 @@ func RunClient(cfg *config.Config, tables []*sudoku.Table) {
 	}
 
 	if tables == nil || len(tables) == 0 || changed {
-		var tErr error
-		tables, tErr = buildTablesFromConfig(cfg)
-		if tErr != nil {
-			log.Fatalf("Failed to build table(s): %v", tErr)
+		var err error
+		tables, err = BuildTables(cfg)
+		if err != nil {
+			log.Fatalf("Failed to build table(s): %v", err)
 		}
 	}
 
@@ -131,9 +115,7 @@ func RunClient(cfg *config.Config, tables []*sudoku.Table) {
 		PrivateKey: privateKeyBytes,
 	}
 
-	httpMaskMode := strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMode))
-	httpMaskMux := strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMultiplex))
-	if !cfg.DisableHTTPMask && (httpMaskMode == "stream" || httpMaskMode == "poll" || httpMaskMode == "auto") && httpMaskMux == "on" {
+	if cfg.HTTPMaskSessionMuxEnabled() {
 		dialer = &tunnel.MuxDialer{BaseDialer: baseDialer}
 		log.Printf("Enabled HTTPMask session mux (single tunnel, multi-target)")
 	} else {

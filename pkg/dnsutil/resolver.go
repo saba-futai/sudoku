@@ -1,4 +1,3 @@
-// pkg/dnsutil/resolver.go
 package dnsutil
 
 import (

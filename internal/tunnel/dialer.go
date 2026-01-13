@@ -30,47 +30,55 @@ type BaseDialer struct {
 	PrivateKey []byte
 }
 
-func (d *BaseDialer) pickTable() (byte, *sudoku.Table, error) {
+func (d *BaseDialer) dialHTTPMaskTunnel(dialCtx context.Context, upgrade func(net.Conn) (net.Conn, error)) (net.Conn, error) {
+	if d.Config == nil {
+		return nil, fmt.Errorf("missing config")
+	}
+	opts := httpmask.TunnelDialOptions{
+		Mode:         d.Config.HTTPMaskMode,
+		TLSEnabled:   d.Config.HTTPMaskTLS,
+		HostOverride: d.Config.HTTPMaskHost,
+		PathRoot:     d.Config.HTTPMaskPathRoot,
+		AuthKey:      d.Config.Key,
+		Upgrade:      upgrade,
+		Multiplex:    d.Config.HTTPMaskMultiplex,
+	}
+	return httpmask.DialTunnel(dialCtx, d.Config.ServerAddress, opts)
+}
+
+func (d *BaseDialer) pickTable() (*sudoku.Table, error) {
 	if len(d.Tables) == 0 {
-		return 0, nil, fmt.Errorf("no table configured")
+		return nil, fmt.Errorf("no table configured")
 	}
 	if len(d.Tables) == 1 {
-		return 0, d.Tables[0], nil
+		return d.Tables[0], nil
 	}
 	// Use crypto/rand to avoid shared global RNG in concurrent dialing.
 	var b [1]byte
 	if _, err := rand.Read(b[:]); err != nil {
-		return 0, nil, fmt.Errorf("random table pick failed: %w", err)
+		return nil, fmt.Errorf("random table pick failed: %w", err)
 	}
 	idx := int(b[0]) % len(d.Tables)
-	return byte(idx), d.Tables[idx], nil
+	return d.Tables[idx], nil
 }
 
 func (d *BaseDialer) dialBase() (net.Conn, error) {
 	// HTTP tunnel (CDN-friendly) modes. The returned conn already strips HTTP headers.
-	if !d.Config.DisableHTTPMask {
-		switch strings.ToLower(strings.TrimSpace(d.Config.HTTPMaskMode)) {
-		case "stream", "poll", "auto":
-			dialCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
+	if d.Config.HTTPMaskTunnelEnabled() {
+		dialCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
 
-			rawRemote, err := httpmask.DialTunnel(dialCtx, d.Config.ServerAddress, httpmask.TunnelDialOptions{
-				Mode:         d.Config.HTTPMaskMode,
-				TLSEnabled:   d.Config.HTTPMaskTLS,
-				HostOverride: d.Config.HTTPMaskHost,
-				Multiplex:    d.Config.HTTPMaskMultiplex,
-			})
-			if err != nil {
-				return nil, fmt.Errorf("dial http tunnel failed: %w", err)
-			}
-
-			tableID, table, err := d.pickTable()
-			if err != nil {
-				rawRemote.Close()
-				return nil, err
-			}
-			return ClientHandshake(rawRemote, d.Config, table, tableID, d.PrivateKey)
+		table, err := d.pickTable()
+		if err != nil {
+			return nil, err
 		}
+		conn, err := d.dialHTTPMaskTunnel(dialCtx, func(raw net.Conn) (net.Conn, error) {
+			return ClientHandshake(raw, d.Config, table, d.PrivateKey)
+		})
+		if err != nil {
+			return nil, fmt.Errorf("dial http tunnel failed: %w", err)
+		}
+		return conn, nil
 	}
 
 	// Resolve server address with DNS concurrency and optimistic cache.
@@ -91,22 +99,64 @@ func (d *BaseDialer) dialBase() (net.Conn, error) {
 	// 2. Send HTTP mask
 	if !d.Config.DisableHTTPMask {
 		// Legacy HTTP mask (not CDN-compatible): write a fake HTTP/1.1 header then switch to raw stream.
-		if err := httpmask.WriteRandomRequestHeader(rawRemote, d.Config.ServerAddress); err != nil {
+		if err := httpmask.WriteRandomRequestHeaderWithPathRoot(rawRemote, d.Config.ServerAddress, d.Config.HTTPMaskPathRoot); err != nil {
 			rawRemote.Close()
 			return nil, fmt.Errorf("write http mask failed: %w", err)
 		}
 	}
 
-	tableID, table, err := d.pickTable()
+	table, err := d.pickTable()
 	if err != nil {
 		rawRemote.Close()
 		return nil, err
 	}
-	return ClientHandshake(rawRemote, d.Config, table, tableID, d.PrivateKey)
+	return ClientHandshake(rawRemote, d.Config, table, d.PrivateKey)
+}
+
+func (d *BaseDialer) dialTarget(destAddrStr string) (net.Conn, error) {
+	if strings.TrimSpace(destAddrStr) == "" {
+		return nil, fmt.Errorf("empty target address")
+	}
+
+	if d.Config.HTTPMaskTunnelEnabled() {
+		dialCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		table, err := d.pickTable()
+		if err != nil {
+			return nil, err
+		}
+
+		conn, err := d.dialHTTPMaskTunnel(dialCtx, func(raw net.Conn) (net.Conn, error) {
+			cConn, err := ClientHandshake(raw, d.Config, table, d.PrivateKey)
+			if err != nil {
+				return nil, err
+			}
+			if err := protocol.WriteAddress(cConn, destAddrStr); err != nil {
+				_ = cConn.Close()
+				return nil, fmt.Errorf("write address failed: %w", err)
+			}
+			return cConn, nil
+		})
+		if err != nil {
+			return nil, fmt.Errorf("dial http tunnel failed: %w", err)
+		}
+		return conn, nil
+	}
+
+	cConn, err := d.dialBase()
+	if err != nil {
+		return nil, err
+	}
+	if err := protocol.WriteAddress(cConn, destAddrStr); err != nil {
+		_ = cConn.Close()
+		return nil, fmt.Errorf("write address failed: %w", err)
+	}
+	return cConn, nil
 }
 
 // ClientHandshake upgrades a raw connection to a Sudoku connection
-func ClientHandshake(conn net.Conn, cfg *config.Config, table *sudoku.Table, tableID byte, privateKey []byte) (net.Conn, error) {
+func ClientHandshake(conn net.Conn, cfg *config.Config, table *sudoku.Table, privateKey []byte) (net.Conn, error) {
 	if !cfg.EnablePureDownlink && cfg.AEAD == "none" {
 		return nil, fmt.Errorf("enable_pure_downlink=false requires AEAD")
 	}
@@ -135,7 +185,6 @@ func ClientHandshake(conn net.Conn, cfg *config.Config, table *sudoku.Table, tab
 			return nil, fmt.Errorf("generate nonce failed: %w", err)
 		}
 	}
-	handshake[8] = tableID
 
 	if _, err := cConn.Write(handshake); err != nil {
 		cConn.Close()
@@ -169,18 +218,7 @@ type StandardDialer struct {
 }
 
 func (d *StandardDialer) Dial(destAddrStr string) (net.Conn, error) {
-	cConn, err := d.dialBase()
-	if err != nil {
-		return nil, err
-	}
-
-	// Standard Mode: Write destination address directly
-	if err := protocol.WriteAddress(cConn, destAddrStr); err != nil {
-		cConn.Close()
-		return nil, fmt.Errorf("write address failed: %w", err)
-	}
-
-	return cConn, nil
+	return d.dialTarget(destAddrStr)
 }
 
 // DialUDPOverTCP establishes a UoT-capable tunnel for UDP proxying.

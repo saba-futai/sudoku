@@ -1,5 +1,6 @@
 {
   "mode": "server/client",
+  "transport": "tcp",
   "local_port": 1080,
   "server_address": "0.0.0.0:8080",
   "fallback_address": "127.0.0.1:80",
@@ -18,6 +19,8 @@
   "disable_http_mask": false,
   "http_mask_mode": "legacy / auto / stream / poll",
   "http_mask_tls": true,
+  "http_mask_host": "",
+  "path_root": "",
   "http_mask_multiplex": "off / auto / on",
   "rule_urls": [
     "https://gh-proxy.org/https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/China/China.list",

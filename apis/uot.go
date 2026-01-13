@@ -11,7 +11,7 @@ import (
 
 // DialUDPOverTCP bootstraps a UDP-over-TCP tunnel using the standard Dial flow.
 func DialUDPOverTCP(ctx context.Context, cfg *ProtocolConfig) (net.Conn, error) {
-	conn, err := establishBaseConn(ctx, cfg, validateUoTConfig)
+	conn, err := establishBaseConn(ctx, cfg, validateUoTConfig, nil)
 	if err != nil {
 		return nil, err
 	}

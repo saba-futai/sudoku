@@ -236,8 +236,9 @@ func TestHTTPMaskTunnel_Boundary_InvalidToken(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read status: %v", err)
 	}
-	if !strings.Contains(line, "403") {
-		t.Fatalf("expected 403, got %q", strings.TrimSpace(line))
+	// Auth is mandatory; probes without a valid auth token should not reveal the tunnel surface.
+	if !strings.Contains(line, "404") {
+		t.Fatalf("expected 404, got %q", strings.TrimSpace(line))
 	}
 }
 

@@ -119,6 +119,10 @@ type ProtocolConfig struct {
 	// When empty, it is derived from ServerAddress.
 	HTTPMaskHost string
 
+	// HTTPMaskPathRoot optionally prefixes all HTTP mask paths with a first-level segment.
+	// Example: "aabbcc" => "/aabbcc/session", "/aabbcc/api/v1/upload", ...
+	HTTPMaskPathRoot string
+
 	// HTTPMaskMultiplex controls multiplex behavior when HTTPMask tunnel modes are enabled:
 	//   - "off": disable reuse; each Dial establishes its own HTTPMask tunnel
 	//   - "auto": reuse underlying HTTP connections across multiple tunnel dials (HTTP/1.1 keep-alive / HTTP/2)
@@ -179,6 +183,24 @@ func (c *ProtocolConfig) Validate() error {
 	case "", "off", "auto", "on":
 	default:
 		return fmt.Errorf("invalid HTTPMaskMultiplex: %s, must be one of: off, auto, on", c.HTTPMaskMultiplex)
+	}
+
+	if v := strings.TrimSpace(c.HTTPMaskPathRoot); v != "" {
+		v = strings.Trim(v, "/")
+		if v == "" || strings.Contains(v, "/") {
+			return fmt.Errorf("invalid HTTPMaskPathRoot: must be a single path segment")
+		}
+		for i := 0; i < len(v); i++ {
+			c := v[i]
+			switch {
+			case c >= 'a' && c <= 'z':
+			case c >= 'A' && c <= 'Z':
+			case c >= '0' && c <= '9':
+			case c == '_' || c == '-':
+			default:
+				return fmt.Errorf("invalid HTTPMaskPathRoot: contains invalid character %q", c)
+			}
+		}
 	}
 
 	return nil

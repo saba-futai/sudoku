@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"fmt"
 	"net"
-	"strings"
 	"sync"
 
 	"github.com/saba-futai/sudoku/internal/protocol"
@@ -76,21 +75,22 @@ func (d *MuxDialer) getOrCreateSession() (*muxSession, error) {
 		d.mu.Unlock()
 		return nil, fmt.Errorf("missing config")
 	}
-	if d.Config.DisableHTTPMask {
+	if !d.Config.HTTPMaskTunnelEnabled() {
 		d.mu.Lock()
 		d.creating = false
 		d.cond.Broadcast()
 		d.mu.Unlock()
-		return nil, fmt.Errorf("mux requires http mask to be enabled")
-	}
-	switch strings.ToLower(strings.TrimSpace(d.Config.HTTPMaskMode)) {
-	case "stream", "poll", "auto":
-	default:
-		d.mu.Lock()
-		d.creating = false
-		d.cond.Broadcast()
-		d.mu.Unlock()
+		if d.Config.DisableHTTPMask {
+			return nil, fmt.Errorf("mux requires http mask to be enabled")
+		}
 		return nil, fmt.Errorf("mux requires http_mask_mode=stream/poll/auto (got %q)", d.Config.HTTPMaskMode)
+	}
+	if d.Config.HTTPMaskMultiplex != "on" {
+		d.mu.Lock()
+		d.creating = false
+		d.cond.Broadcast()
+		d.mu.Unlock()
+		return nil, fmt.Errorf("mux requires http_mask_multiplex=on (got %q)", d.Config.HTTPMaskMultiplex)
 	}
 
 	baseConn, err := d.dialBase()

@@ -106,7 +106,7 @@ func main() {
 			}
 			defer tunnel.Close()
 
-			_ = userHash // hex(sha256(privateKey)[1:8]) for official split-key clients
+			_ = userHash // hex(sha256(privateKey)[:8]) for official split-key clients
 
 			up, err := net.Dial("tcp", target)
 			if err != nil {

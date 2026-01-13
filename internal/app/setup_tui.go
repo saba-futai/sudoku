@@ -37,6 +37,7 @@ func runSetupWizardTUI(defaultServerPath, publicHost string) (wizardInput, bool,
 	httpMaskMode := "legacy"
 	httpMaskTLS := false
 	httpMaskHost := ""
+	httpMaskPathRoot := ""
 	httpMaskMultiplex := "off"
 
 	key := ""
@@ -186,6 +187,10 @@ func runSetupWizardTUI(defaultServerPath, publicHost string) (wizardInput, bool,
 			huh.NewInput().
 				Title("HTTP mask Host override (optional)").
 				Value(&httpMaskHost),
+			huh.NewInput().
+				Title("HTTP mask path root (optional)").
+				Description("Example: aabbcc => /aabbcc/session, /aabbcc/api/v1/upload, ...").
+				Value(&httpMaskPathRoot),
 			huh.NewSelect[string]().
 				Title("HTTP mask multiplex").
 				Options(
@@ -234,6 +239,7 @@ func runSetupWizardTUI(defaultServerPath, publicHost string) (wizardInput, bool,
 		HTTPMaskMode:      httpMaskMode,
 		HTTPMaskTLS:       httpMaskTLS,
 		HTTPMaskHost:      httpMaskHost,
+		HTTPMaskPathRoot:  httpMaskPathRoot,
 		HTTPMaskMultiplex: httpMaskMultiplex,
 		Key:               key,
 		ServerPath:        serverPath,

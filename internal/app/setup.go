@@ -37,6 +37,7 @@ type wizardInput struct {
 	HTTPMaskMode      string
 	HTTPMaskTLS       bool
 	HTTPMaskHost      string
+	HTTPMaskPathRoot  string
 	HTTPMaskMultiplex string
 
 	Key string
@@ -84,6 +85,7 @@ func runSetupWizardPrompt(defaultServerPath, publicHost string) (wizardInput, er
 	httpMaskTLS := strings.ToLower(strings.TrimSpace(promptString(reader, "HTTP mask TLS (https)? (yes/no)", "no", "no")))
 	httpMaskTLSEnabled := httpMaskTLS == "yes" || httpMaskTLS == "y"
 	httpMaskHost := strings.TrimSpace(promptString(reader, "HTTP mask Host override (optional)", "", ""))
+	httpMaskPathRoot := strings.TrimSpace(promptString(reader, "HTTP mask path root (optional, e.g. aabbcc)", "", ""))
 	httpMaskMux := strings.TrimSpace(promptString(reader, "HTTP mask multiplex (off / auto / on)", "", "off"))
 
 	keyInput := promptString(reader, "Shared key (leave empty to auto-generate)", "", "")
@@ -113,6 +115,7 @@ func runSetupWizardPrompt(defaultServerPath, publicHost string) (wizardInput, er
 		HTTPMaskMode:      httpMaskMode,
 		HTTPMaskTLS:       httpMaskTLSEnabled,
 		HTTPMaskHost:      httpMaskHost,
+		HTTPMaskPathRoot:  httpMaskPathRoot,
 		HTTPMaskMultiplex: httpMaskMux,
 		Key:               keyInput,
 		ServerPath:        serverPath,
@@ -197,6 +200,7 @@ func finalizeWizard(in wizardInput) (*WizardResult, error) {
 		HTTPMaskMode:       httpMaskMode,
 		HTTPMaskTLS:        in.HTTPMaskTLS,
 		HTTPMaskHost:       strings.TrimSpace(in.HTTPMaskHost),
+		HTTPMaskPathRoot:   strings.TrimSpace(in.HTTPMaskPathRoot),
 		HTTPMaskMultiplex:  httpMaskMux,
 	}
 
@@ -218,7 +222,14 @@ func finalizeWizard(in wizardInput) (*WizardResult, error) {
 		HTTPMaskMode:       httpMaskMode,
 		HTTPMaskTLS:        in.HTTPMaskTLS,
 		HTTPMaskHost:       strings.TrimSpace(in.HTTPMaskHost),
+		HTTPMaskPathRoot:   strings.TrimSpace(in.HTTPMaskPathRoot),
 		HTTPMaskMultiplex:  httpMaskMux,
+	}
+	if err := serverCfg.Finalize(); err != nil {
+		return nil, fmt.Errorf("finalize server config: %w", err)
+	}
+	if err := clientCfg.Finalize(); err != nil {
+		return nil, fmt.Errorf("finalize client config: %w", err)
 	}
 
 	serverPath := strings.TrimSpace(in.ServerPath)

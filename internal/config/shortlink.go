@@ -27,6 +27,7 @@ type shortLinkPayload struct {
 	HTTPMaskTLS     bool   `json:"ht,omitempty"` // enable HTTPS (when false/omitted, use plain HTTP)
 	HTTPMaskHost    string `json:"hh,omitempty"` // override HTTP Host/SNI in tunnel modes
 	HTTPMaskMux     string `json:"hx,omitempty"` // "off" / "auto" / "on"
+	HTTPMaskPath    string `json:"hy,omitempty"` // optional first-level path root prefix
 }
 
 // BuildShortLinkFromConfig builds a sudoku:// short link from the provided config.
@@ -78,6 +79,9 @@ func BuildShortLinkFromConfig(cfg *Config, advertiseHost string) (string, error)
 	}
 	if strings.TrimSpace(cfg.HTTPMaskHost) != "" {
 		payload.HTTPMaskHost = strings.TrimSpace(cfg.HTTPMaskHost)
+	}
+	if strings.TrimSpace(cfg.HTTPMaskPathRoot) != "" {
+		payload.HTTPMaskPath = strings.TrimSpace(cfg.HTTPMaskPathRoot)
 	}
 	muxMode := strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMultiplex))
 	if muxMode != "" && muxMode != "off" {
@@ -131,6 +135,7 @@ func BuildConfigFromShortLink(link string) (*Config, error) {
 		HTTPMaskMode:      payload.HTTPMaskMode,
 		HTTPMaskTLS:       payload.HTTPMaskTLS,
 		HTTPMaskHost:      payload.HTTPMaskHost,
+		HTTPMaskPathRoot:  strings.TrimSpace(payload.HTTPMaskPath),
 		HTTPMaskMultiplex: strings.TrimSpace(payload.HTTPMaskMux),
 		AEAD:              payload.AEAD,
 		PaddingMin:        5,
@@ -147,27 +152,14 @@ func BuildConfigFromShortLink(link string) (*Config, error) {
 	}
 
 	cfg.EnablePureDownlink = !payload.PackedDownlink
-	if strings.TrimSpace(cfg.HTTPMaskMode) == "" {
-		cfg.HTTPMaskMode = "legacy"
-	}
-	if cfg.DisableHTTPMask {
-		cfg.HTTPMaskMultiplex = "off"
-	} else {
-		switch strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMultiplex)) {
-		case "", "off":
-			cfg.HTTPMaskMultiplex = "off"
-		case "auto", "on":
-			cfg.HTTPMaskMultiplex = strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMultiplex))
-		default:
-			cfg.HTTPMaskMultiplex = "off"
-		}
-	}
-
 	cfg.ASCII = decodeASCII(payload.ASCII)
 	if cfg.AEAD == "" {
 		cfg.AEAD = "none"
 	}
 
+	if err := cfg.Finalize(); err != nil {
+		return nil, err
+	}
 	return cfg, nil
 }
 

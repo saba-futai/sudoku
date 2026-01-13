@@ -31,7 +31,7 @@ func TestSudokuTunnel_Standard(t *testing.T) {
 	privateKey := []byte("test-private-key-for-user-hash")
 	wantUserHash := func() string {
 		h := sha256.Sum256(privateKey)
-		return hex.EncodeToString(h[1:8])
+		return hex.EncodeToString(h[:8])
 	}()
 
 	// 2. Start Mock Server
@@ -90,7 +90,7 @@ func TestSudokuTunnel_Standard(t *testing.T) {
 		BaseDialer: BaseDialer{
 			Config: cfg,
 			Tables: []*sudoku.Table{table},
-			// The official client sends sha256(privateKey)[1:8] in the handshake nonce for multi-user ID.
+			// The official client sends sha256(privateKey)[:8] in the handshake nonce for multi-user ID.
 			PrivateKey: privateKey,
 		},
 	}

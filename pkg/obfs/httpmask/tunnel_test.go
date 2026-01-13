@@ -240,6 +240,108 @@ func TestTunnelServer_Stream_SplitSession_PushPull(t *testing.T) {
 	}
 }
 
+func TestTunnelServer_Stream_Auth_RejectsMissingToken(t *testing.T) {
+	srv := NewTunnelServer(TunnelServerOptions{
+		Mode:                "stream",
+		AuthKey:             "secret-key",
+		PassThroughOnReject: true,
+	})
+
+	client, server := net.Pipe()
+	t.Cleanup(func() { _ = client.Close() })
+
+	var (
+		res HandleResult
+		c   net.Conn
+		err error
+	)
+	done := make(chan struct{})
+	go func() {
+		res, c, err = srv.HandleConn(server)
+		close(done)
+	}()
+
+	_, _ = io.WriteString(client,
+		"GET /session HTTP/1.1\r\n"+
+			"Host: example.com\r\n"+
+			"X-Sudoku-Tunnel: stream\r\n"+
+			"X-Sudoku-Version: 1\r\n"+
+			"\r\n")
+	_ = client.Close()
+	<-done
+
+	if err != nil {
+		t.Fatalf("HandleConn error: %v", err)
+	}
+	if res != HandlePassThrough || c == nil {
+		t.Fatalf("unexpected result: res=%v conn=%v", res, c)
+	}
+	r, ok := c.(interface{ IsHTTPMaskRejected() bool })
+	if !ok || !r.IsHTTPMaskRejected() {
+		_ = c.Close()
+		t.Fatalf("expected rejected passthrough conn")
+	}
+	_ = c.Close()
+}
+
+func TestTunnelServer_Stream_Auth_AllowsValidToken(t *testing.T) {
+	srv := NewTunnelServer(TunnelServerOptions{
+		Mode:    "stream",
+		AuthKey: "secret-key",
+	})
+
+	client, server := net.Pipe()
+	t.Cleanup(func() { _ = client.Close() })
+
+	var (
+		res HandleResult
+		c   net.Conn
+		err error
+	)
+	done := make(chan struct{})
+	go func() {
+		res, c, err = srv.HandleConn(server)
+		close(done)
+	}()
+
+	auth := newTunnelAuth("secret-key", 0)
+	token := auth.token(TunnelModeStream, http.MethodGet, "/session", time.Now())
+
+	_, _ = io.WriteString(client, fmt.Sprintf(
+		"GET /session HTTP/1.1\r\n"+
+			"Host: example.com\r\n"+
+			"X-Sudoku-Tunnel: stream\r\n"+
+			"X-Sudoku-Version: 1\r\n"+
+			"Authorization: Bearer %s\r\n"+
+			"\r\n", token))
+
+	raw, _ := io.ReadAll(client)
+	<-done
+
+	if err != nil {
+		t.Fatalf("HandleConn error: %v", err)
+	}
+	if res != HandleStartTunnel || c == nil {
+		t.Fatalf("unexpected result: res=%v conn=%v", res, c)
+	}
+	defer c.Close()
+
+	parts := strings.SplitN(string(raw), "\r\n\r\n", 2)
+	if len(parts) != 2 {
+		t.Fatalf("invalid http response: %q", string(raw))
+	}
+	body := strings.TrimSpace(parts[1])
+	if !strings.HasPrefix(body, "token=") {
+		t.Fatalf("missing token, body=%q", body)
+	}
+	sessionToken := strings.TrimPrefix(body, "token=")
+	if sessionToken == "" {
+		t.Fatalf("empty token")
+	}
+
+	srv.sessionClose(sessionToken)
+}
+
 func TestPollConn_CloseWrite_NoPanic(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()

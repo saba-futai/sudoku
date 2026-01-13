@@ -1,4 +1,3 @@
-// cmd/sudoku-tunnel/main.go
 package main
 
 import (
@@ -7,13 +6,11 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strings"
 
 	"filippo.io/edwards25519"
 	"github.com/saba-futai/sudoku/internal/app"
 	"github.com/saba-futai/sudoku/internal/config"
 	"github.com/saba-futai/sudoku/pkg/crypto"
-	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
 )
 
 var (
@@ -92,7 +89,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("Failed to parse short link: %v", err)
 		}
-		tables, err := buildTables(cfg.Key, cfg.ASCII, cfg.CustomTable, cfg.CustomTables)
+		tables, err := app.BuildTables(cfg)
 		if err != nil {
 			log.Fatalf("Failed to build table: %v", err)
 		}
@@ -109,7 +106,7 @@ func main() {
 		fmt.Printf("Client config saved to %s\n", result.ClientConfigPath)
 		fmt.Printf("Short link: %s\n", result.ShortLink)
 
-		tables, err := buildTables(result.ServerConfig.Key, result.ServerConfig.ASCII, result.ServerConfig.CustomTable, result.ServerConfig.CustomTables)
+		tables, err := app.BuildTables(result.ServerConfig)
 		if err != nil {
 			log.Fatalf("Failed to build table: %v", err)
 		}
@@ -140,7 +137,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	tables, err := buildTables(cfg.Key, cfg.ASCII, cfg.CustomTable, cfg.CustomTables)
+	tables, err := app.BuildTables(cfg)
 	if err != nil {
 		log.Fatalf("Failed to build table: %v", err)
 	}
@@ -150,23 +147,4 @@ func main() {
 	} else {
 		app.RunServer(cfg, tables)
 	}
-}
-
-func buildTables(key string, ascii string, customTable string, customTables []string) ([]*sudoku.Table, error) {
-	patterns := customTables
-	if len(patterns) == 0 && strings.TrimSpace(customTable) != "" {
-		patterns = []string{customTable}
-	}
-	if len(patterns) == 0 {
-		patterns = []string{""}
-	}
-	tables := make([]*sudoku.Table, 0, len(patterns))
-	for _, p := range patterns {
-		t, err := sudoku.NewTableWithCustom(key, ascii, p)
-		if err != nil {
-			return nil, err
-		}
-		tables = append(tables, t)
-	}
-	return tables, nil
 }

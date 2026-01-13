@@ -1,4 +1,3 @@
-// pkg/obfs/sudoku/table.go
 package sudoku
 
 import (

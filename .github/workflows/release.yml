@@ -71,10 +71,10 @@ jobs:
           cp configs/config.json config.json
           
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            zip ${ASSET_NAME}.zip ${BINARY_NAME} config.json
+            zip ${ASSET_NAME}.zip ${BINARY_NAME} config.json configs/README.md
             echo "ARCHIVE_NAME=${ASSET_NAME}.zip" >> $GITHUB_ENV
           else
-            tar -czvf ${ASSET_NAME}.tar.gz ${BINARY_NAME} config.json
+            tar -czvf ${ASSET_NAME}.tar.gz ${BINARY_NAME} config.json configs/README.md
             echo "ARCHIVE_NAME=${ASSET_NAME}.tar.gz" >> $GITHUB_ENV
           fi
 

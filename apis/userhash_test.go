@@ -87,7 +87,7 @@ func TestUserHash_StableAcrossTableRotation(t *testing.T) {
 	}
 
 	for i := 0; i < attempts; i++ {
-		c, err := establishBaseConn(ctx, clientCfg, validate)
+		c, err := establishBaseConn(ctx, clientCfg, validate, nil)
 		if err != nil {
 			t.Fatalf("dial %d: %v", i, err)
 		}

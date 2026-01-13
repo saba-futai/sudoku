@@ -1,4 +1,3 @@
-// pkg/geodata/manager.go
 package geodata
 
 import (

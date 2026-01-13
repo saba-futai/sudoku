@@ -1,4 +1,3 @@
-// internal/app/server.go
 package app
 
 import (
@@ -26,13 +25,18 @@ func RunServer(cfg *config.Config, tables []*sudoku.Table) {
 	log.Printf("Server on :%d (Fallback: %s)", cfg.LocalPort, cfg.FallbackAddr)
 
 	var tunnelSrv *httpmask.TunnelServer
-	if !cfg.DisableHTTPMask {
-		switch strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMode)) {
-		case "stream", "poll", "auto":
-			tunnelSrv = httpmask.NewTunnelServer(httpmask.TunnelServerOptions{
-				Mode: cfg.HTTPMaskMode,
-			})
-		}
+	if cfg.HTTPMaskTunnelEnabled() {
+		tunnelSrv = httpmask.NewTunnelServer(httpmask.TunnelServerOptions{
+			Mode:     cfg.HTTPMaskMode,
+			PathRoot: cfg.HTTPMaskPathRoot,
+			AuthKey:  cfg.Key,
+			PassThroughOnReject: func() bool {
+				if cfg.SuspiciousAction == "silent" {
+					return true
+				}
+				return cfg.SuspiciousAction == "fallback" && strings.TrimSpace(cfg.FallbackAddr) != ""
+			}(),
+		})
 	}
 
 	for {
@@ -61,6 +65,10 @@ func handleServerConn(rawConn net.Conn, cfg *config.Config, tables []*sudoku.Tab
 			handleSudokuServerConn(c, rawConn, &inner, tables, false)
 			return
 		case httpmask.HandlePassThrough:
+			if r, ok := c.(interface{ IsHTTPMaskRejected() bool }); ok && r.IsHTTPMaskRejected() {
+				handler.HandleSuspicious(c, rawConn, cfg)
+				return
+			}
 			handleSudokuServerConn(c, rawConn, cfg, tables, true)
 			return
 		default:
@@ -110,9 +118,21 @@ func handleSudokuServerConn(handshakeConn net.Conn, rawConn net.Conn, cfg *confi
 	if firstByte[0] == tunnel.UoTMagicByte {
 		if userHash != "" {
 			log.Printf("[Server][UoT][User:%s] session start", userHash)
+		} else {
+			log.Printf("[Server][UoT] session start")
 		}
 		if err := tunnel.HandleUoTServer(tunnelConn); err != nil {
-			log.Printf("[Server][UoT] session ended: %v", err)
+			if userHash != "" {
+				log.Printf("[Server][UoT][User:%s] session end: %v", userHash, err)
+			} else {
+				log.Printf("[Server][UoT] session end: %v", err)
+			}
+		} else {
+			if userHash != "" {
+				log.Printf("[Server][UoT][User:%s] session end", userHash)
+			} else {
+				log.Printf("[Server][UoT] session end")
+			}
 		}
 		return
 	}
@@ -120,9 +140,28 @@ func handleSudokuServerConn(handshakeConn net.Conn, rawConn net.Conn, cfg *confi
 	if firstByte[0] == tunnel.MuxMagicByte {
 		if userHash != "" {
 			log.Printf("[Server][Mux][User:%s] session start", userHash)
+		} else {
+			log.Printf("[Server][Mux] session start")
 		}
-		if err := tunnel.HandleMuxServer(tunnelConn); err != nil {
-			log.Printf("[Server][Mux] session ended: %v", err)
+		logConnect := func(addr string) {
+			if userHash != "" {
+				log.Printf("[Server][Mux][User:%s] Connecting to %s", userHash, addr)
+			} else {
+				log.Printf("[Server][Mux] Connecting to %s", addr)
+			}
+		}
+		if err := tunnel.HandleMuxServer(tunnelConn, logConnect); err != nil {
+			if userHash != "" {
+				log.Printf("[Server][Mux][User:%s] session end: %v", userHash, err)
+			} else {
+				log.Printf("[Server][Mux] session end: %v", err)
+			}
+		} else {
+			if userHash != "" {
+				log.Printf("[Server][Mux][User:%s] session end", userHash)
+			} else {
+				log.Printf("[Server][Mux] session end")
+			}
 		}
 		return
 	}
