@@ -217,6 +217,14 @@ func TestMultiTableRotation_Stress(t *testing.T) {
 				return
 			}
 			defer conn.Close()
+			ioTimeout := 5 * time.Second
+			if dl, ok := ctx.Deadline(); ok {
+				if remain := time.Until(dl); remain > 0 && remain < ioTimeout {
+					ioTimeout = remain
+				}
+			}
+			closeTimer := time.AfterFunc(ioTimeout, func() { _ = conn.Close() })
+			defer closeTimer.Stop()
 			msg := []byte("ping")
 			conn.Write(msg)
 			buf := make([]byte, len(msg))
