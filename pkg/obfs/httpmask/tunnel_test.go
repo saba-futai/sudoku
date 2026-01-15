@@ -2,12 +2,14 @@ package httpmask
 
 import (
 	"bufio"
+	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
 	"io"
 	"net"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -89,6 +91,48 @@ func TestDialTunnel_Auto_FallsBackToPollWithFreshContext(t *testing.T) {
 	_ = c.Close()
 	if peer != nil {
 		_ = peer.Close()
+	}
+}
+
+func TestDialSession_GzipErrorBody_DoesNotLeakBinary(t *testing.T) {
+	acceptEncCh := make(chan string, 1)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case acceptEncCh <- r.Header.Get("Accept-Encoding"):
+		default:
+		}
+
+		body := []byte("404 page not found")
+		if strings.Contains(r.Header.Get("Accept-Encoding"), "gzip") {
+			w.Header().Set("Content-Encoding", "gzip")
+			w.WriteHeader(http.StatusNotFound)
+			gz := gzip.NewWriter(w)
+			_, _ = gz.Write(body)
+			_ = gz.Close()
+			return
+		}
+
+		w.WriteHeader(http.StatusNotFound)
+		_, _ = w.Write(body)
+	}))
+	t.Cleanup(ts.Close)
+
+	serverAddr := strings.TrimPrefix(ts.URL, "http://")
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	t.Cleanup(cancel)
+
+	_, err := dialSession(ctx, serverAddr, TunnelDialOptions{PathRoot: "asdfghjkl"}, TunnelModePoll)
+	if err == nil {
+		t.Fatalf("expected error, got nil")
+	}
+	if got := <-acceptEncCh; got != "" {
+		t.Fatalf("unexpected Accept-Encoding request header: %q", got)
+	}
+	if strings.Contains(err.Error(), "\x1f\x8b") {
+		t.Fatalf("error includes gzipped bytes: %q", err.Error())
+	}
+	if !strings.Contains(err.Error(), "404 page not found") {
+		t.Fatalf("error missing body snippet: %q", err.Error())
 	}
 }
 

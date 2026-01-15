@@ -1235,13 +1235,11 @@ func applyTunnelHeaders(h http.Header, host string, mode TunnelMode) {
 	ua := userAgents[r.Intn(len(userAgents))]
 	accept := accepts[r.Intn(len(accepts))]
 	lang := acceptLanguages[r.Intn(len(acceptLanguages))]
-	enc := acceptEncodings[r.Intn(len(acceptEncodings))]
 	rngPool.Put(r)
 
 	h.Set("User-Agent", ua)
 	h.Set("Accept", accept)
 	h.Set("Accept-Language", lang)
-	h.Set("Accept-Encoding", enc)
 	h.Set("Cache-Control", "no-cache")
 	h.Set("Pragma", "no-cache")
 	h.Set("Connection", "keep-alive")
