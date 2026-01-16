@@ -1823,23 +1823,35 @@ func (s *TunnelServer) reapLater(token string) {
 	if ttl <= 0 {
 		return
 	}
+
 	timer := time.NewTimer(ttl)
 	defer timer.Stop()
-	<-timer.C
 
-	s.mu.Lock()
-	sess, ok := s.sessions[token]
-	if !ok {
+	for {
+		<-timer.C
+
+		s.mu.Lock()
+		sess, ok := s.sessions[token]
+		if !ok {
+			s.mu.Unlock()
+			return
+		}
+		idle := time.Since(sess.lastActive)
+		if idle >= ttl {
+			delete(s.sessions, token)
+			s.mu.Unlock()
+			_ = sess.conn.Close()
+			return
+		}
+		next := ttl - idle
 		s.mu.Unlock()
-		return
+
+		// Avoid a tight loop under high-frequency activity; we only need best-effort cleanup.
+		if next < 50*time.Millisecond {
+			next = 50 * time.Millisecond
+		}
+		timer.Reset(next)
 	}
-	if time.Since(sess.lastActive) < ttl {
-		s.mu.Unlock()
-		return
-	}
-	delete(s.sessions, token)
-	s.mu.Unlock()
-	_ = sess.conn.Close()
 }
 
 func (s *TunnelServer) sessionHas(token string) bool {

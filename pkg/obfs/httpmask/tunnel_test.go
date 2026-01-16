@@ -284,6 +284,68 @@ func TestTunnelServer_Stream_SplitSession_PushPull(t *testing.T) {
 	}
 }
 
+func TestTunnelServer_SessionTTL_ReapsAfterIdle(t *testing.T) {
+	const ttl = 150 * time.Millisecond
+	srv := NewTunnelServer(TunnelServerOptions{
+		Mode:       "poll",
+		SessionTTL: ttl,
+	})
+
+	client, server := net.Pipe()
+	t.Cleanup(func() { _ = client.Close() })
+
+	var (
+		res HandleResult
+		c   net.Conn
+		err error
+	)
+	done := make(chan struct{})
+	go func() {
+		res, c, err = srv.sessionAuthorize(server)
+		close(done)
+	}()
+
+	raw, readErr := io.ReadAll(client)
+	<-done
+
+	if err != nil {
+		t.Fatalf("sessionAuthorize error: %v", err)
+	}
+	if res != HandleStartTunnel || c == nil {
+		t.Fatalf("unexpected sessionAuthorize result: res=%v conn=%v", res, c)
+	}
+	t.Cleanup(func() { _ = c.Close() })
+
+	if readErr != nil {
+		t.Fatalf("read response: %v", readErr)
+	}
+	parts := strings.SplitN(string(raw), "\r\n\r\n", 2)
+	if len(parts) != 2 {
+		t.Fatalf("invalid http response: %q", string(raw))
+	}
+	token, err := parseTunnelToken([]byte(parts[1]))
+	if err != nil || token == "" {
+		t.Fatalf("parse token: %v (%q)", err, strings.TrimSpace(parts[1]))
+	}
+
+	// Ensure the session is considered active right before the first TTL check, then becomes idle.
+	time.Sleep(ttl / 2)
+	if _, ok := srv.sessionGet(token); !ok {
+		t.Fatalf("session missing before reaping: %q", token)
+	}
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if !srv.sessionHas(token) {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+
+	srv.sessionClose(token)
+	t.Fatalf("session not reaped: %q", token)
+}
+
 func TestTunnelServer_Stream_Auth_RejectsMissingToken(t *testing.T) {
 	srv := NewTunnelServer(TunnelServerOptions{
 		Mode:                "stream",
