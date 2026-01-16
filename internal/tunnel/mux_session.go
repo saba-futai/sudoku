@@ -408,6 +408,9 @@ func (c *muxStream) Close() error {
 	return nil
 }
 
+func (c *muxStream) CloseWrite() error { return c.Close() }
+func (c *muxStream) CloseRead() error  { return c.Close() }
+
 func (c *muxStream) LocalAddr() net.Addr  { return c.localAddr }
 func (c *muxStream) RemoteAddr() net.Addr { return c.remoteAddr }
 

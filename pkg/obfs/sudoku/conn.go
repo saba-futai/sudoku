@@ -56,6 +56,26 @@ type Conn struct {
 	paddingRate float32
 }
 
+func (sc *Conn) CloseWrite() error {
+	if sc == nil || sc.Conn == nil {
+		return nil
+	}
+	if cw, ok := sc.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return nil
+}
+
+func (sc *Conn) CloseRead() error {
+	if sc == nil || sc.Conn == nil {
+		return nil
+	}
+	if cr, ok := sc.Conn.(interface{ CloseRead() error }); ok {
+		return cr.CloseRead()
+	}
+	return nil
+}
+
 func NewConn(c net.Conn, table *Table, pMin, pMax int, record bool) *Conn {
 	var seedBytes [8]byte
 	if _, err := crypto_rand.Read(seedBytes[:]); err != nil {

@@ -29,6 +29,26 @@ type PeekConn struct {
 	peeked []byte
 }
 
+func (c *PeekConn) CloseWrite() error {
+	if c == nil || c.Conn == nil {
+		return nil
+	}
+	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return nil
+}
+
+func (c *PeekConn) CloseRead() error {
+	if c == nil || c.Conn == nil {
+		return nil
+	}
+	if cr, ok := c.Conn.(interface{ CloseRead() error }); ok {
+		return cr.CloseRead()
+	}
+	return nil
+}
+
 func (c *PeekConn) Read(p []byte) (n int, err error) {
 	if len(c.peeked) > 0 {
 		n = copy(p, c.peeked)

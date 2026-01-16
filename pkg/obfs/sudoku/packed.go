@@ -44,6 +44,26 @@ type PackedConn struct {
 	padPool     []byte
 }
 
+func (pc *PackedConn) CloseWrite() error {
+	if pc == nil || pc.Conn == nil {
+		return nil
+	}
+	if cw, ok := pc.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return nil
+}
+
+func (pc *PackedConn) CloseRead() error {
+	if pc == nil || pc.Conn == nil {
+		return nil
+	}
+	if cr, ok := pc.Conn.(interface{ CloseRead() error }); ok {
+		return cr.CloseRead()
+	}
+	return nil
+}
+
 func NewPackedConn(c net.Conn, table *Table, pMin, pMax int) *PackedConn {
 	var seedBytes [8]byte
 	if _, err := crypto_rand.Read(seedBytes[:]); err != nil {

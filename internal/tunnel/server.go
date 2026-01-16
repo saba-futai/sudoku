@@ -39,6 +39,26 @@ type BufferedConn struct {
 	recordLock sync.Mutex
 }
 
+func (bc *BufferedConn) CloseWrite() error {
+	if bc == nil || bc.Conn == nil {
+		return nil
+	}
+	if cw, ok := bc.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return nil
+}
+
+func (bc *BufferedConn) CloseRead() error {
+	if bc == nil || bc.Conn == nil {
+		return nil
+	}
+	if cr, ok := bc.Conn.(interface{ CloseRead() error }); ok {
+		return cr.CloseRead()
+	}
+	return nil
+}
+
 func (bc *BufferedConn) Read(p []byte) (n int, err error) {
 	n, err = bc.r.Read(p)
 	if n > 0 && bc.recorder != nil {
@@ -53,6 +73,26 @@ func (bc *BufferedConn) Read(p []byte) (n int, err error) {
 type PreBufferedConn struct {
 	net.Conn
 	buf []byte
+}
+
+func (p *PreBufferedConn) CloseWrite() error {
+	if p == nil || p.Conn == nil {
+		return nil
+	}
+	if cw, ok := p.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return nil
+}
+
+func (p *PreBufferedConn) CloseRead() error {
+	if p == nil || p.Conn == nil {
+		return nil
+	}
+	if cr, ok := p.Conn.(interface{ CloseRead() error }); ok {
+		return cr.CloseRead()
+	}
+	return nil
 }
 
 // NewPreBufferedConn replays the provided bytes before reading from the underlying connection.
@@ -133,6 +173,26 @@ type recordedConn struct {
 	recorded []byte
 }
 
+func (rc *recordedConn) CloseWrite() error {
+	if rc == nil || rc.Conn == nil {
+		return nil
+	}
+	if cw, ok := rc.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return nil
+}
+
+func (rc *recordedConn) CloseRead() error {
+	if rc == nil || rc.Conn == nil {
+		return nil
+	}
+	if cr, ok := rc.Conn.(interface{ CloseRead() error }); ok {
+		return cr.CloseRead()
+	}
+	return nil
+}
+
 func (rc *recordedConn) GetBufferedAndRecorded() []byte {
 	return rc.recorded
 }
@@ -140,6 +200,26 @@ func (rc *recordedConn) GetBufferedAndRecorded() []byte {
 type prefixedRecorderConn struct {
 	net.Conn
 	prefix []byte
+}
+
+func (pc *prefixedRecorderConn) CloseWrite() error {
+	if pc == nil || pc.Conn == nil {
+		return nil
+	}
+	if cw, ok := pc.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return nil
+}
+
+func (pc *prefixedRecorderConn) CloseRead() error {
+	if pc == nil || pc.Conn == nil {
+		return nil
+	}
+	if cr, ok := pc.Conn.(interface{ CloseRead() error }); ok {
+		return cr.CloseRead()
+	}
+	return nil
 }
 
 func (pc *prefixedRecorderConn) GetBufferedAndRecorded() []byte {

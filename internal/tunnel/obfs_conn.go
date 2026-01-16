@@ -20,6 +20,41 @@ type directionalConn struct {
 	closers []func() error
 }
 
+func (c *directionalConn) CloseWrite() error {
+	var firstErr error
+	for _, fn := range c.closers {
+		if fn == nil {
+			continue
+		}
+		if err := fn(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	if cw, ok := c.writer.(interface{ CloseWrite() error }); ok {
+		if err := cw.CloseWrite(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		return firstErr
+	}
+	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+		if err := cw.CloseWrite(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+func (c *directionalConn) CloseRead() error {
+	if cr, ok := c.reader.(interface{ CloseRead() error }); ok {
+		return cr.CloseRead()
+	}
+	if cr, ok := c.Conn.(interface{ CloseRead() error }); ok {
+		return cr.CloseRead()
+	}
+	return nil
+}
+
 func newDirectionalConn(base net.Conn, reader io.Reader, writer io.Writer, closers ...func() error) net.Conn {
 	return &directionalConn{
 		Conn:    base,

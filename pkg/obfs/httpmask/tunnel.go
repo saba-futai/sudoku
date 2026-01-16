@@ -1499,6 +1499,26 @@ type preBufferedConn struct {
 	rejected bool
 }
 
+func (p *preBufferedConn) CloseWrite() error {
+	if p == nil || p.Conn == nil {
+		return nil
+	}
+	if cw, ok := p.Conn.(interface{ CloseWrite() error }); ok {
+		return cw.CloseWrite()
+	}
+	return nil
+}
+
+func (p *preBufferedConn) CloseRead() error {
+	if p == nil || p.Conn == nil {
+		return nil
+	}
+	if cr, ok := p.Conn.(interface{ CloseRead() error }); ok {
+		return cr.CloseRead()
+	}
+	return nil
+}
+
 func newPreBufferedConn(conn net.Conn, pre []byte) *preBufferedConn {
 	cpy := make([]byte, len(pre))
 	copy(cpy, pre)
@@ -1546,6 +1566,48 @@ func (c *bodyConn) Write(p []byte) (int, error) {
 		_ = c.flush()
 	}
 	return n, err
+}
+
+func (c *bodyConn) CloseWrite() error {
+	if c == nil {
+		return nil
+	}
+
+	var firstErr error
+	if c.writer != nil {
+		if err := c.writer.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+		// NewChunkedWriter does not write the final CRLF. Ensure a clean terminator.
+		if c.tail != nil {
+			_, _ = c.tail.Write([]byte("\r\n"))
+		} else if c.Conn != nil {
+			_, _ = c.Conn.Write([]byte("\r\n"))
+		}
+		if c.flush != nil {
+			_ = c.flush()
+		}
+		c.writer = nil
+	}
+
+	if c.Conn != nil {
+		if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
+			if err := cw.CloseWrite(); err != nil && firstErr == nil {
+				firstErr = err
+			}
+		}
+	}
+	return firstErr
+}
+
+func (c *bodyConn) CloseRead() error {
+	if c == nil || c.Conn == nil {
+		return nil
+	}
+	if cr, ok := c.Conn.(interface{ CloseRead() error }); ok {
+		return cr.CloseRead()
+	}
+	return nil
 }
 
 func (c *bodyConn) Close() error {
