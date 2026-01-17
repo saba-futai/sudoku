@@ -10,6 +10,22 @@ import (
 	"github.com/saba-futai/sudoku/internal/config"
 )
 
+func writeFullConn(conn net.Conn, data []byte) error {
+	for len(data) > 0 {
+		n, err := conn.Write(data)
+		if n > 0 {
+			data = data[n:]
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+	}
+	return nil
+}
+
 func HandleSuspicious(wrapper net.Conn, rawConn net.Conn, cfg *config.Config) {
 	remoteAddr := rawConn.RemoteAddr().String()
 
@@ -39,11 +55,13 @@ func HandleSuspicious(wrapper net.Conn, rawConn net.Conn, cfg *config.Config) {
 	}
 
 	if len(badData) > 0 {
-		if _, err := dst.Write(badData); err != nil {
+		_ = dst.SetWriteDeadline(time.Now().Add(3 * time.Second))
+		if err := writeFullConn(dst, badData); err != nil {
 			dst.Close()
 			rawConn.Close()
 			return
 		}
+		_ = dst.SetWriteDeadline(time.Time{})
 	}
 
 	var wg sync.WaitGroup

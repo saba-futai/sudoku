@@ -393,34 +393,46 @@ func startDualMiddleman(listenPort, targetPort int, upChan, downChan chan []byte
 // SOCKS helpers for UoT tests.
 func performUDPAssociate(t *testing.T, serverAddr string, dialer *net.Dialer) (net.Conn, *net.UDPAddr) {
 	t.Helper()
-	if dialer == nil {
-		dialer = &net.Dialer{}
+	d := net.Dialer{}
+	if dialer != nil {
+		d = *dialer
 	}
-	ctrl, err := dialer.Dial("tcp", serverAddr)
+	if d.Timeout == 0 {
+		d.Timeout = 3 * time.Second
+	}
+	ctrl, err := d.Dial("tcp", serverAddr)
 	if err != nil {
 		t.Fatalf("Failed to connect to client control port: %v", err)
 	}
 
-	if _, err := ctrl.Write([]byte{0x05, 0x01, 0x00}); err != nil {
+	_ = ctrl.SetWriteDeadline(time.Now().Add(3 * time.Second))
+	if err := writeFullConn(ctrl, []byte{0x05, 0x01, 0x00}); err != nil {
 		t.Fatalf("Failed to write socks greeting: %v", err)
 	}
+	_ = ctrl.SetWriteDeadline(time.Time{})
 	methodResp := make([]byte, 2)
+	_ = ctrl.SetReadDeadline(time.Now().Add(3 * time.Second))
 	if _, err := io.ReadFull(ctrl, methodResp); err != nil {
 		t.Fatalf("Failed to read socks method response: %v", err)
 	}
+	_ = ctrl.SetReadDeadline(time.Time{})
 	if methodResp[1] != 0x00 {
 		t.Fatalf("Unexpected method selection: %v", methodResp[1])
 	}
 
 	req := []byte{0x05, 0x03, 0x00, 0x01, 0, 0, 0, 0, 0, 0}
-	if _, err := ctrl.Write(req); err != nil {
+	_ = ctrl.SetWriteDeadline(time.Now().Add(3 * time.Second))
+	if err := writeFullConn(ctrl, req); err != nil {
 		t.Fatalf("Failed to write UDP associate: %v", err)
 	}
+	_ = ctrl.SetWriteDeadline(time.Time{})
 
 	header := make([]byte, 3)
+	_ = ctrl.SetReadDeadline(time.Now().Add(3 * time.Second))
 	if _, err := io.ReadFull(ctrl, header); err != nil {
 		t.Fatalf("Failed to read UDP associate reply header: %v", err)
 	}
+	_ = ctrl.SetReadDeadline(time.Time{})
 	if header[0] != 0x05 || header[2] != 0x00 {
 		t.Fatalf("invalid UDP associate reply header: %v", header)
 	}
@@ -525,11 +537,15 @@ func waitForPort(t testing.TB, port int) {
 func sendHTTPConnect(t *testing.T, conn net.Conn, target string) {
 	t.Helper()
 	req := fmt.Sprintf("CONNECT %s HTTP/1.1\r\nHost: %s\r\n\r\n", target, target)
-	if _, err := conn.Write([]byte(req)); err != nil {
+	_ = conn.SetWriteDeadline(time.Now().Add(3 * time.Second))
+	if err := writeFullConn(conn, []byte(req)); err != nil {
 		t.Fatalf("proxy handshake write failed: %v", err)
 	}
+	_ = conn.SetWriteDeadline(time.Time{})
 	buf := make([]byte, 1024)
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	n, err := conn.Read(buf)
+	_ = conn.SetReadDeadline(time.Time{})
 	if err != nil || !contains(buf[:n], "HTTP/1.1 200 Connection Established") {
 		t.Fatalf("proxy handshake failed: %v", string(buf[:n]))
 	}
@@ -598,13 +614,17 @@ func runTCPTransfer(t *testing.T, asciiMode string, pureDownlink bool, key strin
 	target := fmt.Sprintf("127.0.0.1:%d", echoPort)
 	sendHTTPConnect(t, conn, target)
 
-	if _, err := conn.Write(payload); err != nil {
+	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	if err := writeFullConn(conn, payload); err != nil {
 		t.Fatalf("write payload failed: %v", err)
 	}
+	_ = conn.SetWriteDeadline(time.Time{})
 	echoBuf := make([]byte, len(payload))
+	_ = conn.SetReadDeadline(time.Now().Add(10 * time.Second))
 	if _, err := io.ReadFull(conn, echoBuf); err != nil {
 		t.Fatalf("read echo failed: %v", err)
 	}
+	_ = conn.SetReadDeadline(time.Time{})
 	if !bytes.Equal(echoBuf, payload) {
 		t.Fatalf("echo mismatch")
 	}
@@ -735,6 +755,7 @@ func TestUDPOverTCPWithPackedDownlink(t *testing.T) {
 	}
 
 	respBuf := make([]byte, len(payload)+64)
+	_ = relayConn.SetReadDeadline(time.Now().Add(3 * time.Second))
 	n, err := relayConn.Read(respBuf)
 	if err != nil {
 		t.Fatalf("failed to read udp response: %v", err)
@@ -950,6 +971,7 @@ func TestFallback(t *testing.T) {
 	webPort := ports[1]
 
 	startWebServer(webPort)
+	waitForPort(t, webPort)
 
 	serverCfg := &config.Config{
 		Mode:               "server",
@@ -962,7 +984,8 @@ func TestFallback(t *testing.T) {
 	}
 	startSudokuServer(t, serverCfg)
 
-	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d", serverPort))
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Get(fmt.Sprintf("http://127.0.0.1:%d", serverPort))
 	if err != nil {
 		t.Fatalf("Failed to connect to server: %v", err)
 	}
@@ -1027,15 +1050,19 @@ func TestConcurrentPackedSessions(t *testing.T) {
 			target := fmt.Sprintf("127.0.0.1:%d", echoPort)
 			sendHTTPConnect(t, conn, target)
 			msg := []byte(fmt.Sprintf("hello-%d-%d", id, time.Now().UnixNano()))
-			if _, err := conn.Write(msg); err != nil {
+			_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+			if err := writeFullConn(conn, msg); err != nil {
 				t.Errorf("write %d failed: %v", id, err)
 				return
 			}
+			_ = conn.SetWriteDeadline(time.Time{})
 			resp := make([]byte, len(msg))
+			_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 			if _, err := io.ReadFull(conn, resp); err != nil {
 				t.Errorf("read %d failed: %v", id, err)
 				return
 			}
+			_ = conn.SetReadDeadline(time.Time{})
 			if !bytes.Equal(resp, msg) {
 				t.Errorf("echo mismatch %d", id)
 			}
@@ -1090,13 +1117,17 @@ func TestEd25519KeyInterop(t *testing.T) {
 	defer conn.Close()
 	sendHTTPConnect(t, conn, fmt.Sprintf("127.0.0.1:%d", echoPort))
 	payload := []byte("ed25519-key-test")
-	if _, err := conn.Write(payload); err != nil {
+	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+	if err := writeFullConn(conn, payload); err != nil {
 		t.Fatalf("write failed: %v", err)
 	}
+	_ = conn.SetWriteDeadline(time.Time{})
 	resp := make([]byte, len(payload))
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	if _, err := io.ReadFull(conn, resp); err != nil {
 		t.Fatalf("read failed: %v", err)
 	}
+	_ = conn.SetReadDeadline(time.Time{})
 	if !bytes.Equal(resp, payload) {
 		t.Fatalf("echo mismatch")
 	}
