@@ -1357,11 +1357,33 @@ func (s *TunnelServer) HandleConn(rawConn net.Conn) (HandleResult, net.Conn, err
 
 	tunnelHeader := strings.ToLower(strings.TrimSpace(req.headers["x-sudoku-tunnel"]))
 	if tunnelHeader == "" {
-		// Not our tunnel; replay full bytes to legacy handler.
-		prefix := make([]byte, 0, len(headerBytes)+len(buffered))
-		prefix = append(prefix, headerBytes...)
-		prefix = append(prefix, buffered...)
-		return HandlePassThrough, newPreBufferedConn(rawConn, prefix), nil
+		// Some CDNs / forward proxies may strip unknown headers. When AuthKey is enabled, we can
+		// safely infer the intended tunnel mode by verifying the Authorization token against
+		// both stream/poll modes and picking the one that matches.
+		if s.auth != nil {
+			u, err := url.ParseRequestURI(req.target)
+			if err == nil {
+				path, ok := stripPathRoot(s.pathRoot, u.Path)
+				if ok && s.isAllowedBasePath(path) {
+					streamOK := s.auth.verify(req.headers, TunnelModeStream, req.method, path, time.Now())
+					pollOK := s.auth.verify(req.headers, TunnelModePoll, req.method, path, time.Now())
+					switch {
+					case streamOK && !pollOK:
+						tunnelHeader = string(TunnelModeStream)
+					case pollOK && !streamOK:
+						tunnelHeader = string(TunnelModePoll)
+					}
+				}
+			}
+		}
+
+		if tunnelHeader == "" {
+			// Not our tunnel; replay full bytes to legacy handler.
+			prefix := make([]byte, 0, len(headerBytes)+len(buffered))
+			prefix = append(prefix, headerBytes...)
+			prefix = append(prefix, buffered...)
+			return HandlePassThrough, newPreBufferedConn(rawConn, prefix), nil
+		}
 	}
 
 	reject := func() (HandleResult, net.Conn, error) {
