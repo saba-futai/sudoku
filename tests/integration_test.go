@@ -196,6 +196,87 @@ func analyzeTraffic(data []byte) TrafficStats {
 	return stats
 }
 
+type closeWriter interface {
+	CloseWrite() error
+}
+
+type closeReader interface {
+	CloseRead() error
+}
+
+func writeFullConn(conn net.Conn, data []byte) error {
+	for len(data) > 0 {
+		n, err := conn.Write(data)
+		if n > 0 {
+			data = data[n:]
+		}
+		if err != nil {
+			return err
+		}
+		if n == 0 {
+			return io.ErrShortWrite
+		}
+	}
+	return nil
+}
+
+func copyWithCapture(dst, src net.Conn, ch chan []byte) error {
+	buf := make([]byte, 32*1024)
+	for {
+		n, err := src.Read(buf)
+		if n > 0 {
+			if ch != nil {
+				data := make([]byte, n)
+				copy(data, buf[:n])
+				select {
+				case ch <- data:
+				default:
+				}
+			}
+			if writeErr := writeFullConn(dst, buf[:n]); writeErr != nil {
+				return writeErr
+			}
+		}
+		if err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return err
+		}
+	}
+}
+
+func pipeConnWithCapture(a, b net.Conn, upChan, downChan chan []byte) {
+	var wg sync.WaitGroup
+	wg.Add(2)
+
+	go func() {
+		defer wg.Done()
+		_ = copyWithCapture(b, a, upChan)
+		if cw, ok := b.(closeWriter); ok {
+			_ = cw.CloseWrite()
+		}
+		if cr, ok := a.(closeReader); ok {
+			_ = cr.CloseRead()
+		}
+	}()
+
+	go func() {
+		defer wg.Done()
+		_ = copyWithCapture(a, b, downChan)
+		if cw, ok := a.(closeWriter); ok {
+			_ = cw.CloseWrite()
+		}
+		if cr, ok := b.(closeReader); ok {
+			_ = cr.CloseRead()
+		}
+	}()
+
+	wg.Wait()
+	_ = a.Close()
+	_ = b.Close()
+}
+
 // Middleman utilities to observe traffic.
 func startMiddleman(listenPort, targetPort int, protocol string, analysisChan chan []byte) error {
 	targetAddr := fmt.Sprintf("127.0.0.1:%d", targetPort)
@@ -271,33 +352,12 @@ func startMiddleman(listenPort, targetPort int, protocol string, analysisChan ch
 				return
 			}
 			go func(src net.Conn) {
-				defer src.Close()
 				dst, err := net.Dial("tcp", targetAddr)
 				if err != nil {
+					_ = src.Close()
 					return
 				}
-				defer dst.Close()
-
-				go func() {
-					buf := make([]byte, 32*1024)
-					for {
-						n, err := src.Read(buf)
-						if n > 0 {
-							data := make([]byte, n)
-							copy(data, buf[:n])
-							select {
-							case analysisChan <- data:
-							default:
-							}
-							dst.Write(data)
-						}
-						if err != nil {
-							break
-						}
-					}
-				}()
-
-				io.Copy(src, dst)
+				pipeConnWithCapture(src, dst, analysisChan, nil)
 			}(clientConn)
 		}
 	}()
@@ -318,61 +378,12 @@ func startDualMiddleman(listenPort, targetPort int, upChan, downChan chan []byte
 				return
 			}
 			go func(src net.Conn) {
-				defer src.Close()
 				dst, err := net.Dial("tcp", targetAddr)
 				if err != nil {
+					_ = src.Close()
 					return
 				}
-				defer dst.Close()
-
-				var wg sync.WaitGroup
-				wg.Add(2)
-
-				go func() {
-					defer wg.Done()
-					buf := make([]byte, 32*1024)
-					for {
-						n, err := src.Read(buf)
-						if n > 0 {
-							data := make([]byte, n)
-							copy(data, buf[:n])
-							if upChan != nil {
-								select {
-								case upChan <- data:
-								default:
-								}
-							}
-							dst.Write(data)
-						}
-						if err != nil {
-							return
-						}
-					}
-				}()
-
-				go func() {
-					defer wg.Done()
-					buf := make([]byte, 32*1024)
-					for {
-						n, err := dst.Read(buf)
-						if n > 0 {
-							data := make([]byte, n)
-							copy(data, buf[:n])
-							if downChan != nil {
-								select {
-								case downChan <- data:
-								default:
-								}
-							}
-							src.Write(data)
-						}
-						if err != nil {
-							return
-						}
-					}
-				}()
-
-				wg.Wait()
+				pipeConnWithCapture(src, dst, upChan, downChan)
 			}(clientConn)
 		}
 	}()
