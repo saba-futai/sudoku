@@ -2,6 +2,7 @@ package httpmask
 
 import (
 	"bufio"
+	"bytes"
 	"compress/gzip"
 	"context"
 	"errors"
@@ -584,6 +585,7 @@ func TestPollConn_CloseWrite_NoPanic(t *testing.T) {
 			rxc:        make(chan []byte, 1),
 			closed:     make(chan struct{}),
 			writeCh:    make(chan []byte, n),
+			writeClosed: make(chan struct{}),
 			localAddr:  &net.TCPAddr{},
 			remoteAddr: &net.TCPAddr{},
 		},
@@ -598,8 +600,180 @@ func TestPollConn_CloseWrite_NoPanic(t *testing.T) {
 		}()
 	}
 
+	_ = c.CloseWrite()
 	_ = c.Close()
 	wg.Wait()
+}
+
+func startRawTunnelServer(t testing.TB, srv *TunnelServer) (addr string, stop func(), tunnelCh <-chan net.Conn) {
+	t.Helper()
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+
+	tch := make(chan net.Conn, 1)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for {
+			raw, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			go func(conn net.Conn) {
+				res, c, err := srv.HandleConn(conn)
+				if err != nil {
+					_ = conn.Close()
+					return
+				}
+				switch res {
+				case HandleStartTunnel:
+					select {
+					case tch <- c:
+					default:
+						_ = c.Close()
+					}
+				case HandlePassThrough:
+					_ = c.Close()
+				case HandleDone:
+				default:
+				}
+			}(raw)
+		}
+	}()
+
+	stop = func() {
+		_ = ln.Close()
+		<-done
+	}
+
+	return ln.Addr().String(), stop, tch
+}
+
+func TestDialStreamSplit_CloseWrite_SendsFIN(t *testing.T) {
+	srv := NewTunnelServer(TunnelServerOptions{
+		Mode:            "auto",
+		PullReadTimeout: 50 * time.Millisecond,
+		SessionTTL:      2 * time.Second,
+	})
+
+	addr, stop, tunnelCh := startRawTunnelServer(t, srv)
+	defer stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, err := dialStreamSplit(ctx, addr, TunnelDialOptions{})
+	if err != nil {
+		t.Fatalf("dialStreamSplit: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	var tunnel net.Conn
+	select {
+	case tunnel = <-tunnelCh:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for server tunnel conn")
+	}
+	t.Cleanup(func() { _ = tunnel.Close() })
+
+	payload := []byte("hello")
+
+	readDone := make(chan struct{})
+	var (
+		got []byte
+		rerr error
+	)
+	go func() {
+		_ = tunnel.SetReadDeadline(time.Now().Add(3 * time.Second))
+		got, rerr = io.ReadAll(tunnel)
+		close(readDone)
+	}()
+
+	if _, err := conn.Write(payload); err != nil {
+		t.Fatalf("client write: %v", err)
+	}
+	cw, ok := conn.(interface{ CloseWrite() error })
+	if !ok {
+		t.Fatalf("client conn missing CloseWrite")
+	}
+	_ = cw.CloseWrite()
+
+	select {
+	case <-readDone:
+	case <-time.After(4 * time.Second):
+		t.Fatalf("server read timeout (FIN not delivered)")
+	}
+	if rerr != nil {
+		t.Fatalf("server read error: %v", rerr)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("server payload mismatch: got=%q want=%q", string(got), string(payload))
+	}
+}
+
+func TestDialPoll_CloseWrite_SendsFIN(t *testing.T) {
+	srv := NewTunnelServer(TunnelServerOptions{
+		Mode:            "auto",
+		PullReadTimeout: 50 * time.Millisecond,
+		SessionTTL:      2 * time.Second,
+	})
+
+	addr, stop, tunnelCh := startRawTunnelServer(t, srv)
+	defer stop()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	conn, err := dialPoll(ctx, addr, TunnelDialOptions{})
+	if err != nil {
+		t.Fatalf("dialPoll: %v", err)
+	}
+	t.Cleanup(func() { _ = conn.Close() })
+
+	var tunnel net.Conn
+	select {
+	case tunnel = <-tunnelCh:
+	case <-time.After(2 * time.Second):
+		t.Fatalf("timeout waiting for server tunnel conn")
+	}
+	t.Cleanup(func() { _ = tunnel.Close() })
+
+	payload := []byte("hello")
+
+	readDone := make(chan struct{})
+	var (
+		got []byte
+		rerr error
+	)
+	go func() {
+		_ = tunnel.SetReadDeadline(time.Now().Add(3 * time.Second))
+		got, rerr = io.ReadAll(tunnel)
+		close(readDone)
+	}()
+
+	if _, err := conn.Write(payload); err != nil {
+		t.Fatalf("client write: %v", err)
+	}
+	cw, ok := conn.(interface{ CloseWrite() error })
+	if !ok {
+		t.Fatalf("client conn missing CloseWrite")
+	}
+	_ = cw.CloseWrite()
+
+	select {
+	case <-readDone:
+	case <-time.After(4 * time.Second):
+		t.Fatalf("server read timeout (FIN not delivered)")
+	}
+	if rerr != nil {
+		t.Fatalf("server read error: %v", rerr)
+	}
+	if !bytes.Equal(got, payload) {
+		t.Fatalf("server payload mismatch: got=%q want=%q", string(got), string(payload))
+	}
 }
 
 func TestDialStreamOne_UpgradeHonorsContextCancel(t *testing.T) {

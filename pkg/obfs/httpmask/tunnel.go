@@ -195,6 +195,20 @@ func (c *httpStreamConn) Read(p []byte) (int, error) {
 
 func (c *httpStreamConn) Write(p []byte) (int, error) { return c.writer.Write(p) }
 
+func (c *httpStreamConn) CloseWrite() error {
+	if c == nil || c.writer == nil {
+		return nil
+	}
+	return c.writer.Close()
+}
+
+func (c *httpStreamConn) CloseRead() error {
+	if c == nil || c.reader == nil {
+		return nil
+	}
+	return c.reader.Close()
+}
+
 func (c *httpStreamConn) Close() error {
 	var firstErr error
 	if c.cancel != nil {
@@ -374,12 +388,27 @@ type queuedConn struct {
 	closed chan struct{}
 
 	writeCh chan []byte
+	// writeClosed is closed by CloseWrite to stop accepting new payloads.
+	// When closed, Write returns io.ErrClosedPipe, but Read is unaffected.
+	writeClosed chan struct{}
 
 	mu         sync.Mutex
 	readBuf    []byte
 	closeErr   error
 	localAddr  net.Addr
 	remoteAddr net.Addr
+}
+
+func (c *queuedConn) CloseWrite() error {
+	if c == nil || c.writeClosed == nil {
+		return nil
+	}
+	c.mu.Lock()
+	if !isClosedPipeChan(c.writeClosed) {
+		close(c.writeClosed)
+	}
+	c.mu.Unlock()
+	return nil
 }
 
 func (c *queuedConn) closeWithError(err error) error {
@@ -435,15 +464,33 @@ func (c *queuedConn) Write(b []byte) (n int, err error) {
 		return 0, c.closedErr()
 	default:
 	}
+	if c.writeClosed != nil {
+		select {
+		case <-c.writeClosed:
+			c.mu.Unlock()
+			return 0, io.ErrClosedPipe
+		default:
+		}
+	}
 	c.mu.Unlock()
 
 	payload := make([]byte, len(b))
 	copy(payload, b)
+	if c.writeClosed == nil {
+		select {
+		case c.writeCh <- payload:
+			return len(b), nil
+		case <-c.closed:
+			return 0, c.closedErr()
+		}
+	}
 	select {
 	case c.writeCh <- payload:
 		return len(b), nil
 	case <-c.closed:
 		return 0, c.closedErr()
+	case <-c.writeClosed:
+		return 0, io.ErrClosedPipe
 	}
 }
 
@@ -463,6 +510,7 @@ type streamSplitConn struct {
 	client     *http.Client
 	pushURL    string
 	pullURL    string
+	finURL     string
 	closeURL   string
 	headerHost string
 	auth       *tunnelAuth
@@ -484,6 +532,7 @@ type sessionDialInfo struct {
 	client     *http.Client
 	pushURL    string
 	pullURL    string
+	finURL     string
 	closeURL   string
 	headerHost string
 	auth       *tunnelAuth
@@ -593,12 +642,14 @@ func dialSession(ctx context.Context, serverAddress string, opts TunnelDialOptio
 
 	pushURL := (&url.URL{Scheme: scheme, Host: urlHost, Path: joinPathRoot(opts.PathRoot, "/api/v1/upload"), RawQuery: "token=" + url.QueryEscape(token)}).String()
 	pullURL := (&url.URL{Scheme: scheme, Host: urlHost, Path: joinPathRoot(opts.PathRoot, "/stream"), RawQuery: "token=" + url.QueryEscape(token)}).String()
+	finURL := (&url.URL{Scheme: scheme, Host: urlHost, Path: joinPathRoot(opts.PathRoot, "/api/v1/upload"), RawQuery: "token=" + url.QueryEscape(token) + "&fin=1"}).String()
 	closeURL := (&url.URL{Scheme: scheme, Host: urlHost, Path: joinPathRoot(opts.PathRoot, "/api/v1/upload"), RawQuery: "token=" + url.QueryEscape(token) + "&close=1"}).String()
 
 	return &sessionDialInfo{
 		client:     client,
 		pushURL:    pushURL,
 		pullURL:    pullURL,
+		finURL:     finURL,
 		closeURL:   closeURL,
 		headerHost: headerHost,
 		auth:       auth,
@@ -629,6 +680,30 @@ func bestEffortCloseSession(client *http.Client, closeURL, headerHost string, mo
 	_ = resp.Body.Close()
 }
 
+func bestEffortCloseWriteSession(client *http.Client, finURL, headerHost string, mode TunnelMode, auth *tunnelAuth) {
+	if client == nil || finURL == "" || headerHost == "" {
+		return
+	}
+
+	closeCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(closeCtx, http.MethodPost, finURL, nil)
+	if err != nil {
+		return
+	}
+	req.Host = headerHost
+	applyTunnelHeaders(req.Header, headerHost, mode)
+	applyTunnelAuthHeader(req.Header, auth, mode, http.MethodPost, "/api/v1/upload")
+
+	resp, err := client.Do(req)
+	if err != nil || resp == nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, 4*1024))
+	_ = resp.Body.Close()
+}
+
 func dialStreamSplit(ctx context.Context, serverAddress string, opts TunnelDialOptions) (net.Conn, error) {
 	info, err := dialSession(ctx, serverAddress, opts, TunnelModeStream)
 	if err != nil {
@@ -642,6 +717,7 @@ func dialStreamSplit(ctx context.Context, serverAddress string, opts TunnelDialO
 		client:     info.client,
 		pushURL:    info.pushURL,
 		pullURL:    info.pullURL,
+		finURL:     info.finURL,
 		closeURL:   info.closeURL,
 		headerHost: info.headerHost,
 		auth:       info.auth,
@@ -649,6 +725,7 @@ func dialStreamSplit(ctx context.Context, serverAddress string, opts TunnelDialO
 			rxc:        make(chan []byte, 256),
 			closed:     make(chan struct{}),
 			writeCh:    make(chan []byte, 256),
+			writeClosed: make(chan struct{}),
 			localAddr:  &net.TCPAddr{},
 			remoteAddr: &net.TCPAddr{},
 		},
@@ -887,6 +964,27 @@ func (c *streamSplitConn) pushLoop() {
 				return
 			}
 			resetTimer()
+		case <-c.writeClosed:
+			// Drain any already-accepted writes so CloseWrite does not lose data.
+			for {
+				select {
+				case b := <-c.writeCh:
+					if len(b) == 0 {
+						continue
+					}
+					if buf.Len()+len(b) > maxBatchBytes {
+						if err := flushWithRetry(); err != nil {
+							_ = c.Close()
+							return
+						}
+					}
+					_, _ = buf.Write(b)
+				default:
+					_ = flushWithRetry()
+					bestEffortCloseWriteSession(c.client, c.finURL, c.headerHost, TunnelModeStream, c.auth)
+					return
+				}
+			}
 		case <-c.closed:
 			_ = flushWithRetry()
 			return
@@ -903,6 +1001,7 @@ type pollConn struct {
 	client     *http.Client
 	pushURL    string
 	pullURL    string
+	finURL     string
 	closeURL   string
 	headerHost string
 	auth       *tunnelAuth
@@ -948,6 +1047,7 @@ func dialPoll(ctx context.Context, serverAddress string, opts TunnelDialOptions)
 		client:     info.client,
 		pushURL:    info.pushURL,
 		pullURL:    info.pullURL,
+		finURL:     info.finURL,
 		closeURL:   info.closeURL,
 		headerHost: info.headerHost,
 		auth:       info.auth,
@@ -955,6 +1055,7 @@ func dialPoll(ctx context.Context, serverAddress string, opts TunnelDialOptions)
 			rxc:        make(chan []byte, 128),
 			closed:     make(chan struct{}),
 			writeCh:    make(chan []byte, 256),
+			writeClosed: make(chan struct{}),
 			localAddr:  &net.TCPAddr{},
 			remoteAddr: &net.TCPAddr{},
 		},
@@ -1190,6 +1291,41 @@ func (c *pollConn) pushLoop() {
 				return
 			}
 			resetTimer()
+		case <-c.writeClosed:
+			// Drain any already-accepted writes so CloseWrite does not lose data.
+			for {
+				select {
+				case b := <-c.writeCh:
+					if len(b) == 0 {
+						continue
+					}
+					for len(b) > 0 {
+						chunk := b
+						if len(chunk) > maxLineRawBytes {
+							chunk = b[:maxLineRawBytes]
+						}
+						b = b[len(chunk):]
+
+						encLen := base64.StdEncoding.EncodedLen(len(chunk))
+						if pendingRaw+len(chunk) > maxBatchBytes || buf.Len()+encLen+1 > maxBatchBytes*2 {
+							if err := flushWithRetry(); err != nil {
+								_ = c.closeWithError(fmt.Errorf("poll push flush failed: %w", err))
+								return
+							}
+						}
+
+						tmp := make([]byte, base64.StdEncoding.EncodedLen(len(chunk)))
+						base64.StdEncoding.Encode(tmp, chunk)
+						buf.Write(tmp)
+						buf.WriteByte('\n')
+						pendingRaw += len(chunk)
+					}
+				default:
+					_ = flushWithRetry()
+					bestEffortCloseWriteSession(c.client, c.finURL, c.headerHost, TunnelModePoll, c.auth)
+					return
+				}
+			}
 		case <-c.closed:
 			_ = flushWithRetry()
 			return
@@ -1683,6 +1819,7 @@ func (s *TunnelServer) handleStream(rawConn net.Conn, req *httpRequestHeader, he
 
 	token := u.Query().Get("token")
 	closeFlag := u.Query().Get("close") == "1"
+	finFlag := u.Query().Get("fin") == "1"
 
 	switch strings.ToUpper(req.method) {
 	case http.MethodGet:
@@ -1707,6 +1844,12 @@ func (s *TunnelServer) handleStream(rawConn net.Conn, req *httpRequestHeader, he
 			}
 			if closeFlag {
 				s.sessionClose(token)
+				_ = writeSimpleHTTPResponse(rawConn, http.StatusOK, "")
+				_ = rawConn.Close()
+				return HandleDone, nil, nil
+			}
+			if finFlag {
+				s.sessionCloseWrite(token)
 				_ = writeSimpleHTTPResponse(rawConn, http.StatusOK, "")
 				_ = rawConn.Close()
 				return HandleDone, nil, nil
@@ -1835,6 +1978,7 @@ func (s *TunnelServer) handlePoll(rawConn net.Conn, req *httpRequestHeader, head
 
 	token := u.Query().Get("token")
 	closeFlag := u.Query().Get("close") == "1"
+	finFlag := u.Query().Get("fin") == "1"
 	switch strings.ToUpper(req.method) {
 	case http.MethodGet:
 		if token == "" && path == "/session" {
@@ -1863,6 +2007,12 @@ func (s *TunnelServer) handlePoll(rawConn net.Conn, req *httpRequestHeader, head
 			_ = rawConn.Close()
 			return HandleDone, nil, nil
 		}
+		if finFlag {
+			s.sessionCloseWrite(token)
+			_ = writeSimpleHTTPResponse(rawConn, http.StatusOK, "")
+			_ = rawConn.Close()
+			return HandleDone, nil, nil
+		}
 		bodyReader, err := newRequestBodyReader(newPreBufferedConn(rawConn, buffered), req.headers)
 		if err != nil {
 			return rejectOrReply(http.StatusBadRequest, "bad request")
@@ -1881,7 +2031,7 @@ func (s *TunnelServer) sessionAuthorize(rawConn net.Conn) (HandleResult, net.Con
 		return HandleDone, nil, nil
 	}
 
-	c1, c2 := net.Pipe()
+	c1, c2 := newHalfPipe()
 
 	s.mu.Lock()
 	s.sessions[token] = &tunnelSession{conn: c2, lastActive: time.Now()}
@@ -1966,6 +2116,18 @@ func (s *TunnelServer) sessionClose(token string) {
 	if ok {
 		_ = sess.conn.Close()
 	}
+}
+
+func (s *TunnelServer) sessionCloseWrite(token string) {
+	sess, ok := s.sessionGet(token)
+	if !ok || sess == nil || sess.conn == nil {
+		return
+	}
+	if cw, ok := sess.conn.(interface{ CloseWrite() error }); ok {
+		_ = cw.CloseWrite()
+		return
+	}
+	_ = sess.conn.Close()
 }
 
 func (s *TunnelServer) pollPush(rawConn net.Conn, token string, body io.Reader) (HandleResult, net.Conn, error) {
