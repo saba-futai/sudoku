@@ -86,12 +86,24 @@ func TestHTTPMaskTunnel_Stream(t *testing.T) {
 	}
 	defer conn.Close()
 
+	// Guard against platform-specific deadlocks caused by small TCP buffers when a client writes a large payload
+	// before reading any response (notably on Windows CI).
+	closeTimer := time.AfterFunc(10*time.Second, func() { _ = conn.Close() })
+	defer closeTimer.Stop()
+
 	msg := []byte(strings.Repeat("a", 256*1024)) // large enough to exercise streaming
+	buf := make([]byte, len(msg))
+
+	readDone := make(chan error, 1)
+	go func() {
+		_, err := io.ReadFull(conn, buf)
+		readDone <- err
+	}()
+
 	if _, err := conn.Write(msg); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	buf := make([]byte, len(msg))
-	if _, err := io.ReadFull(conn, buf); err != nil {
+	if err := <-readDone; err != nil {
 		t.Fatalf("read: %v", err)
 	}
 	if string(buf) != string(msg) {
