@@ -288,7 +288,7 @@ func dialStreamOne(ctx context.Context, serverAddress string, opts TunnelDialOpt
 	req.Host = headerHost
 
 	applyTunnelHeaders(req.Header, headerHost, TunnelModeStream)
-	applyTunnelAuthHeader(req.Header, auth, TunnelModeStream, http.MethodPost, basePath)
+	applyTunnelAuth(req, auth, TunnelModeStream, http.MethodPost, basePath)
 	req.Header.Set("Content-Type", ctype)
 
 	client := newHTTPClient(urlHost, dialAddr, serverName, scheme, 32, multiplexEnabled(opts.Multiplex))
@@ -617,7 +617,7 @@ func dialSession(ctx context.Context, serverAddress string, opts TunnelDialOptio
 	}
 	req.Host = headerHost
 	applyTunnelHeaders(req.Header, headerHost, mode)
-	applyTunnelAuthHeader(req.Header, auth, mode, http.MethodGet, "/session")
+	applyTunnelAuth(req, auth, mode, http.MethodGet, "/session")
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -670,7 +670,7 @@ func bestEffortCloseSession(client *http.Client, closeURL, headerHost string, mo
 	}
 	req.Host = headerHost
 	applyTunnelHeaders(req.Header, headerHost, mode)
-	applyTunnelAuthHeader(req.Header, auth, mode, http.MethodPost, "/api/v1/upload")
+	applyTunnelAuth(req, auth, mode, http.MethodPost, "/api/v1/upload")
 
 	resp, err := client.Do(req)
 	if err != nil || resp == nil {
@@ -694,7 +694,7 @@ func bestEffortCloseWriteSession(client *http.Client, finURL, headerHost string,
 	}
 	req.Host = headerHost
 	applyTunnelHeaders(req.Header, headerHost, mode)
-	applyTunnelAuthHeader(req.Header, auth, mode, http.MethodPost, "/api/v1/upload")
+	applyTunnelAuth(req, auth, mode, http.MethodPost, "/api/v1/upload")
 
 	resp, err := client.Do(req)
 	if err != nil || resp == nil {
@@ -722,12 +722,12 @@ func dialStreamSplit(ctx context.Context, serverAddress string, opts TunnelDialO
 		headerHost: info.headerHost,
 		auth:       info.auth,
 		queuedConn: queuedConn{
-			rxc:        make(chan []byte, 256),
-			closed:     make(chan struct{}),
-			writeCh:    make(chan []byte, 256),
+			rxc:         make(chan []byte, 256),
+			closed:      make(chan struct{}),
+			writeCh:     make(chan []byte, 256),
 			writeClosed: make(chan struct{}),
-			localAddr:  &net.TCPAddr{},
-			remoteAddr: &net.TCPAddr{},
+			localAddr:   &net.TCPAddr{},
+			remoteAddr:  &net.TCPAddr{},
 		},
 	}
 
@@ -780,7 +780,7 @@ func (c *streamSplitConn) pullLoop() {
 		}
 		req.Host = c.headerHost
 		applyTunnelHeaders(req.Header, c.headerHost, TunnelModeStream)
-		applyTunnelAuthHeader(req.Header, c.auth, TunnelModeStream, http.MethodGet, "/stream")
+		applyTunnelAuth(req, c.auth, TunnelModeStream, http.MethodGet, "/stream")
 
 		resp, err := c.client.Do(req)
 		if err != nil {
@@ -878,7 +878,7 @@ func (c *streamSplitConn) pushLoop() {
 		}
 		req.Host = c.headerHost
 		applyTunnelHeaders(req.Header, c.headerHost, TunnelModeStream)
-		applyTunnelAuthHeader(req.Header, c.auth, TunnelModeStream, http.MethodPost, "/api/v1/upload")
+		applyTunnelAuth(req, c.auth, TunnelModeStream, http.MethodPost, "/api/v1/upload")
 		req.Header.Set("Content-Type", "application/octet-stream")
 
 		resp, err := c.client.Do(req)
@@ -1052,12 +1052,12 @@ func dialPoll(ctx context.Context, serverAddress string, opts TunnelDialOptions)
 		headerHost: info.headerHost,
 		auth:       info.auth,
 		queuedConn: queuedConn{
-			rxc:        make(chan []byte, 128),
-			closed:     make(chan struct{}),
-			writeCh:    make(chan []byte, 256),
+			rxc:         make(chan []byte, 128),
+			closed:      make(chan struct{}),
+			writeCh:     make(chan []byte, 256),
 			writeClosed: make(chan struct{}),
-			localAddr:  &net.TCPAddr{},
-			remoteAddr: &net.TCPAddr{},
+			localAddr:   &net.TCPAddr{},
+			remoteAddr:  &net.TCPAddr{},
 		},
 	}
 
@@ -1102,7 +1102,7 @@ func (c *pollConn) pullLoop() {
 		}
 		req.Host = c.headerHost
 		applyTunnelHeaders(req.Header, c.headerHost, TunnelModePoll)
-		applyTunnelAuthHeader(req.Header, c.auth, TunnelModePoll, http.MethodGet, "/stream")
+		applyTunnelAuth(req, c.auth, TunnelModePoll, http.MethodGet, "/stream")
 
 		resp, err := c.client.Do(req)
 		if err != nil {
@@ -1188,7 +1188,7 @@ func (c *pollConn) pushLoop() {
 		}
 		req.Host = c.headerHost
 		applyTunnelHeaders(req.Header, c.headerHost, TunnelModePoll)
-		applyTunnelAuthHeader(req.Header, c.auth, TunnelModePoll, http.MethodPost, "/api/v1/upload")
+		applyTunnelAuth(req, c.auth, TunnelModePoll, http.MethodPost, "/api/v1/upload")
 		req.Header.Set("Content-Type", "text/plain")
 
 		resp, err := c.client.Do(req)
@@ -1501,8 +1501,12 @@ func (s *TunnelServer) HandleConn(rawConn net.Conn) (HandleResult, net.Conn, err
 			if err == nil {
 				path, ok := stripPathRoot(s.pathRoot, u.Path)
 				if ok && s.isAllowedBasePath(path) {
-					streamOK := s.auth.verify(req.headers, TunnelModeStream, req.method, path, time.Now())
-					pollOK := s.auth.verify(req.headers, TunnelModePoll, req.method, path, time.Now())
+					authVal := req.headers["authorization"]
+					if authVal == "" {
+						authVal = u.Query().Get(tunnelAuthQueryKey)
+					}
+					streamOK := s.auth.verifyValue(authVal, TunnelModeStream, req.method, path, time.Now())
+					pollOK := s.auth.verifyValue(authVal, TunnelModePoll, req.method, path, time.Now())
 					switch {
 					case streamOK && !pollOK:
 						tunnelHeader = string(TunnelModeStream)
@@ -1813,7 +1817,11 @@ func (s *TunnelServer) handleStream(rawConn net.Conn, req *httpRequestHeader, he
 	if !ok || !s.isAllowedBasePath(path) {
 		return rejectOrReply(http.StatusNotFound, "not found")
 	}
-	if !s.auth.verify(req.headers, TunnelModeStream, req.method, path, time.Now()) {
+	authVal := req.headers["authorization"]
+	if authVal == "" {
+		authVal = u.Query().Get(tunnelAuthQueryKey)
+	}
+	if !s.auth.verifyValue(authVal, TunnelModeStream, req.method, path, time.Now()) {
 		return rejectOrReply(http.StatusNotFound, "not found")
 	}
 
@@ -1972,7 +1980,11 @@ func (s *TunnelServer) handlePoll(rawConn net.Conn, req *httpRequestHeader, head
 	if !ok || !s.isAllowedBasePath(path) {
 		return rejectOrReply(http.StatusNotFound, "not found")
 	}
-	if !s.auth.verify(req.headers, TunnelModePoll, req.method, path, time.Now()) {
+	authVal := req.headers["authorization"]
+	if authVal == "" {
+		authVal = u.Query().Get(tunnelAuthQueryKey)
+	}
+	if !s.auth.verifyValue(authVal, TunnelModePoll, req.method, path, time.Now()) {
 		return rejectOrReply(http.StatusNotFound, "not found")
 	}
 

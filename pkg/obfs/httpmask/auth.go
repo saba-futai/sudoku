@@ -14,6 +14,7 @@ import (
 const (
 	tunnelAuthHeaderKey    = "Authorization"
 	tunnelAuthHeaderPrefix = "Bearer "
+	tunnelAuthQueryKey     = "auth"
 )
 
 type tunnelAuth struct {
@@ -63,7 +64,15 @@ func (a *tunnelAuth) verify(headers map[string]string, mode TunnelMode, method, 
 		return false
 	}
 
-	val := strings.TrimSpace(headers["authorization"])
+	return a.verifyValue(headers["authorization"], mode, method, path, now)
+}
+
+func (a *tunnelAuth) verifyValue(val string, mode TunnelMode, method, path string, now time.Time) bool {
+	if a == nil {
+		return true
+	}
+
+	val = strings.TrimSpace(val)
 	if val == "" {
 		return false
 	}
@@ -134,3 +143,19 @@ func applyTunnelAuthHeader(h httpHeaderSetter, auth *tunnelAuth, mode TunnelMode
 }
 
 type httpHeaderSetter = http.Header
+
+func applyTunnelAuth(req *http.Request, auth *tunnelAuth, mode TunnelMode, method, path string) {
+	if auth == nil || req == nil {
+		return
+	}
+	token := auth.token(mode, method, path, time.Now())
+	if token == "" {
+		return
+	}
+	req.Header.Set(tunnelAuthHeaderKey, tunnelAuthHeaderPrefix+token)
+	if req.URL != nil {
+		q := req.URL.Query()
+		q.Set(tunnelAuthQueryKey, token)
+		req.URL.RawQuery = q.Encode()
+	}
+}

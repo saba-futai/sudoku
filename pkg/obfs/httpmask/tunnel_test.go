@@ -261,6 +261,128 @@ func TestTunnelServer_InferModeWithoutTunnelHeader_Poll(t *testing.T) {
 	_ = c.Close()
 }
 
+func TestTunnelServer_InferModeWithoutTunnelHeader_Stream_AuthQuery(t *testing.T) {
+	srv := NewTunnelServer(TunnelServerOptions{
+		Mode:            "auto",
+		PathRoot:        "httpmaskpath",
+		AuthKey:         "secret",
+		PullReadTimeout: 50 * time.Millisecond,
+		SessionTTL:      50 * time.Millisecond,
+	})
+
+	client, server := net.Pipe()
+	t.Cleanup(func() { _ = client.Close() })
+
+	var (
+		res HandleResult
+		c   net.Conn
+		err error
+	)
+	done := make(chan struct{})
+	go func() {
+		res, c, err = srv.HandleConn(server)
+		close(done)
+	}()
+
+	auth := newTunnelAuth("secret", 0)
+	authToken := auth.token(TunnelModeStream, http.MethodGet, "/session", time.Now())
+
+	_, _ = io.WriteString(client, fmt.Sprintf(
+		"GET /httpmaskpath/session?auth=%s HTTP/1.1\r\n"+
+			"Host: example.com\r\n"+
+			"X-Sudoku-Version: 1\r\n"+
+			"\r\n", authToken))
+
+	raw, _ := io.ReadAll(client)
+	<-done
+
+	if err != nil {
+		t.Fatalf("HandleConn error: %v", err)
+	}
+	if res != HandleStartTunnel || c == nil {
+		t.Fatalf("unexpected result: res=%v conn=%v", res, c)
+	}
+
+	parts := strings.SplitN(string(raw), "\r\n\r\n", 2)
+	if len(parts) != 2 {
+		_ = c.Close()
+		t.Fatalf("invalid http response: %q", string(raw))
+	}
+	body := strings.TrimSpace(parts[1])
+	if !strings.HasPrefix(body, "token=") {
+		_ = c.Close()
+		t.Fatalf("missing token, body=%q", body)
+	}
+	sessToken := strings.TrimPrefix(body, "token=")
+	if sessToken == "" {
+		_ = c.Close()
+		t.Fatalf("empty session token")
+	}
+	srv.sessionClose(sessToken)
+	_ = c.Close()
+}
+
+func TestTunnelServer_InferModeWithoutTunnelHeader_Poll_AuthQuery(t *testing.T) {
+	srv := NewTunnelServer(TunnelServerOptions{
+		Mode:            "auto",
+		PathRoot:        "httpmaskpath",
+		AuthKey:         "secret",
+		PullReadTimeout: 50 * time.Millisecond,
+		SessionTTL:      50 * time.Millisecond,
+	})
+
+	client, server := net.Pipe()
+	t.Cleanup(func() { _ = client.Close() })
+
+	var (
+		res HandleResult
+		c   net.Conn
+		err error
+	)
+	done := make(chan struct{})
+	go func() {
+		res, c, err = srv.HandleConn(server)
+		close(done)
+	}()
+
+	auth := newTunnelAuth("secret", 0)
+	authToken := auth.token(TunnelModePoll, http.MethodGet, "/session", time.Now())
+
+	_, _ = io.WriteString(client, fmt.Sprintf(
+		"GET /httpmaskpath/session?auth=%s HTTP/1.1\r\n"+
+			"Host: example.com\r\n"+
+			"X-Sudoku-Version: 1\r\n"+
+			"\r\n", authToken))
+
+	raw, _ := io.ReadAll(client)
+	<-done
+
+	if err != nil {
+		t.Fatalf("HandleConn error: %v", err)
+	}
+	if res != HandleStartTunnel || c == nil {
+		t.Fatalf("unexpected result: res=%v conn=%v", res, c)
+	}
+
+	parts := strings.SplitN(string(raw), "\r\n\r\n", 2)
+	if len(parts) != 2 {
+		_ = c.Close()
+		t.Fatalf("invalid http response: %q", string(raw))
+	}
+	body := strings.TrimSpace(parts[1])
+	if !strings.HasPrefix(body, "token=") {
+		_ = c.Close()
+		t.Fatalf("missing token, body=%q", body)
+	}
+	sessToken := strings.TrimPrefix(body, "token=")
+	if sessToken == "" {
+		_ = c.Close()
+		t.Fatalf("empty session token")
+	}
+	srv.sessionClose(sessToken)
+	_ = c.Close()
+}
+
 func TestTunnelServer_Stream_SplitSession_PushPull(t *testing.T) {
 	srv := NewTunnelServer(TunnelServerOptions{
 		Mode:            "stream",
@@ -582,12 +704,12 @@ func TestPollConn_CloseWrite_NoPanic(t *testing.T) {
 		ctx:    ctx,
 		cancel: cancel,
 		queuedConn: queuedConn{
-			rxc:        make(chan []byte, 1),
-			closed:     make(chan struct{}),
-			writeCh:    make(chan []byte, n),
+			rxc:         make(chan []byte, 1),
+			closed:      make(chan struct{}),
+			writeCh:     make(chan []byte, n),
 			writeClosed: make(chan struct{}),
-			localAddr:  &net.TCPAddr{},
-			remoteAddr: &net.TCPAddr{},
+			localAddr:   &net.TCPAddr{},
+			remoteAddr:  &net.TCPAddr{},
 		},
 	}
 
@@ -683,7 +805,7 @@ func TestDialStreamSplit_CloseWrite_SendsFIN(t *testing.T) {
 
 	readDone := make(chan struct{})
 	var (
-		got []byte
+		got  []byte
 		rerr error
 	)
 	go func() {
@@ -745,7 +867,7 @@ func TestDialPoll_CloseWrite_SendsFIN(t *testing.T) {
 
 	readDone := make(chan struct{})
 	var (
-		got []byte
+		got  []byte
 		rerr error
 	)
 	go func() {
