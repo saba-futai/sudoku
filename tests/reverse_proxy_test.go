@@ -274,6 +274,109 @@ func TestReverseProxy_PathPrefix_Srcset(t *testing.T) {
 	}
 }
 
+func TestReverseProxy_PathPrefix_JSBacktickAndEscapedSlash(t *testing.T) {
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app.js":
+			w.Header().Set("Content-Type", "application/javascript")
+			_, _ = w.Write([]byte("fetch(`/api/ping`); const x=\"\\/api\\/ping\";"))
+		case "/api/ping":
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte("pong"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer origin.Close()
+	originAddr := strings.TrimPrefix(origin.URL, "http://")
+
+	pair, err := crypto.GenerateMasterKey()
+	if err != nil {
+		t.Fatalf("keygen failed: %v", err)
+	}
+	serverKey := crypto.EncodePoint(pair.Public)
+	clientKey := crypto.EncodeScalar(pair.Private)
+
+	ports, err := getFreePorts(3)
+	if err != nil {
+		t.Fatalf("ports: %v", err)
+	}
+	serverPort := ports[0]
+	clientPort := ports[1]
+	reversePort := ports[2]
+
+	reverseListen := fmt.Sprintf("127.0.0.1:%d", reversePort)
+
+	serverCfg := &config.Config{
+		Mode:               "server",
+		Transport:          "tcp",
+		LocalPort:          serverPort,
+		FallbackAddr:       "",
+		Key:                serverKey,
+		AEAD:               "chacha20-poly1305",
+		SuspiciousAction:   "fallback",
+		PaddingMin:         0,
+		PaddingMax:         0,
+		ASCII:              "prefer_ascii",
+		CustomTable:        "xpxvvpvv",
+		EnablePureDownlink: true,
+		HTTPMask: config.HTTPMaskConfig{
+			Disable: true,
+		},
+		Reverse: &config.ReverseConfig{
+			Listen: reverseListen,
+		},
+	}
+	startSudokuServer(t, serverCfg)
+	waitForAddr(t, reverseListen)
+
+	clientCfg := &config.Config{
+		Mode:               "client",
+		Transport:          "tcp",
+		LocalPort:          clientPort,
+		ServerAddress:      fmt.Sprintf("127.0.0.1:%d", serverPort),
+		Key:                clientKey,
+		AEAD:               "chacha20-poly1305",
+		PaddingMin:         0,
+		PaddingMax:         0,
+		ASCII:              "prefer_ascii",
+		CustomTable:        "xpxvvpvv",
+		EnablePureDownlink: true,
+		ProxyMode:          "direct",
+		HTTPMask: config.HTTPMaskConfig{
+			Disable: true,
+		},
+		Reverse: &config.ReverseConfig{
+			ClientID: "r4s",
+			Routes: []config.ReverseRoute{
+				{
+					Path:   "/gitea",
+					Target: originAddr,
+				},
+			},
+		},
+	}
+	startSudokuClient(t, clientCfg)
+
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	resp, err := httpClient.Get(fmt.Sprintf("http://%s/gitea/app.js", reverseListen))
+	if err != nil {
+		t.Fatalf("reverse js: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reverse js status: %d", resp.StatusCode)
+	}
+	js := string(body)
+	if !strings.Contains(js, "fetch(`/gitea/api/ping`)") {
+		t.Fatalf("expected rewritten template literal, got: %q", js)
+	}
+	if !strings.Contains(js, "const x=\"\\/gitea/api\\/ping\"") {
+		t.Fatalf("expected rewritten escaped slash string, got: %q", js)
+	}
+}
+
 func TestReverseProxy_PathPrefix_GzipOrigin(t *testing.T) {
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeGzip := func(ct, body string) {

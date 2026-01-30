@@ -763,8 +763,18 @@ func isRootPathContext(b []byte, slashIndex int) bool {
 	}
 	prev := b[slashIndex-1]
 	switch prev {
-	case '"', '\'':
+	case '"', '\'', '`':
 		return true
+	case '\\':
+		// JSON/JS may escape slashes as "\/". Treat a leading escaped slash in a quoted string
+		// as a root-absolute path start.
+		if slashIndex >= 2 {
+			switch b[slashIndex-2] {
+			case '"', '\'', '`':
+				return true
+			default:
+			}
+		}
 	default:
 	}
 
