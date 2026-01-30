@@ -150,6 +150,7 @@ func (c *Config) Finalize() error {
 
 		if len(c.Reverse.Routes) > 0 {
 			seen := make(map[string]struct{}, len(c.Reverse.Routes))
+			seenTCP := false
 			out := c.Reverse.Routes[:0]
 			for _, r := range c.Reverse.Routes {
 				r.Path = strings.TrimSpace(r.Path)
@@ -159,22 +160,38 @@ func (c *Config) Finalize() error {
 				if r.Path == "" && r.Target == "" {
 					continue
 				}
-				if r.Path == "" {
-					return fmt.Errorf("reverse route: missing path")
-				}
-				if !strings.HasPrefix(r.Path, "/") {
-					r.Path = "/" + r.Path
-				}
-				r.Path = path.Clean(r.Path)
-				if r.Path != "/" {
-					r.Path = strings.TrimRight(r.Path, "/")
+				// Path empty => raw TCP reverse on reverse.listen (no HTTP path prefix).
+				// Only one TCP route is supported per server entry.
+				if r.Path != "" {
+					if !strings.HasPrefix(r.Path, "/") {
+						r.Path = "/" + r.Path
+					}
+					r.Path = path.Clean(r.Path)
+					if r.Path != "/" {
+						r.Path = strings.TrimRight(r.Path, "/")
+					}
 				}
 
 				if r.Target == "" {
+					if r.Path == "" {
+						return fmt.Errorf("reverse tcp route: missing target")
+					}
 					return fmt.Errorf("reverse route %q: missing target", r.Path)
 				}
 				if _, _, err := net.SplitHostPort(r.Target); err != nil {
+					if r.Path == "" {
+						return fmt.Errorf("reverse tcp route: invalid target %q: %w", r.Target, err)
+					}
 					return fmt.Errorf("reverse route %q: invalid target %q: %w", r.Path, r.Target, err)
+				}
+
+				if r.Path == "" {
+					if seenTCP {
+						return fmt.Errorf("reverse route duplicate tcp mapping")
+					}
+					seenTCP = true
+					out = append(out, r)
+					continue
 				}
 
 				if _, ok := seen[r.Path]; ok {

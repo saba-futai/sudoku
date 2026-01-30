@@ -44,6 +44,11 @@ func pipeConn(a, b net.Conn) {
 	_ = b.Close()
 }
 
+// PipeConn copies data bidirectionally between a and b, then closes both.
+func PipeConn(a, b net.Conn) {
+	pipeConn(a, b)
+}
+
 func copyOneWay(dst io.Writer, src io.Reader) {
 	buf := bufferPool.Get().([]byte)
 	defer bufferPool.Put(buf)

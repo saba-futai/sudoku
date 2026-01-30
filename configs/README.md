@@ -112,14 +112,20 @@
 ```
 
 ### 反向代理（Reverse Proxy over Sudoku）
-用于让 NAT 后的客户端把本地 HTTP 服务通过隧道暴露给服务端，再由服务端通过不同路径前缀访问。
+用于让 NAT 后的客户端把本地服务通过隧道暴露给服务端。
 
-- 服务端：`reverse.listen`（如 `":8081"`）开启一个 HTTP 入口；通过 `http://<server>:8081/<path>/...` 访问。
+- 服务端：`reverse.listen`（如 `":8081"`）开启一个入口：
+  - HTTP：通过 `http://<server>:8081/<path>/...` 访问
+  - TCP：当存在 `path=""` 的路由时，非 HTTP 的入站连接会被当作**纯 TCP**转发到该目标
 - 客户端：`reverse.routes` 声明要暴露的本地服务：
   - `reverse.routes[].path`：对外路径前缀（如 `"/gitea"`）
   - `reverse.routes[].target`：客户端本地 `host:port`（如 `"127.0.0.1:3000"`）
   - `reverse.routes[].strip_prefix`：是否去掉前缀后再转发（默认 `true`）
   - `reverse.routes[].host_header`：可选，覆盖转发时的 `Host`
+
+纯 TCP 反代：
+- 将 `reverse.routes[].path` 置空（或省略该字段）即可启用 TCP 映射：`{ "target": "10.0.0.1:25565" }`
+- 该模式每个 `reverse.listen` 仅支持 **1 条** TCP 路由（因为原始 TCP 没有“路径”可以区分多服务）
 
 ### 其他
 - `rule_urls`：仅客户端 `proxy_mode=pac` 时使用；支持：

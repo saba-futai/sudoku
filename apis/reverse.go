@@ -12,7 +12,10 @@ import (
 	"github.com/saba-futai/sudoku/internal/reverse"
 )
 
-// ReverseRoute maps a public path prefix to a client-side TCP target (HTTP service).
+// ReverseRoute maps a public HTTP path prefix (or a raw TCP entry) to a client-side TCP target.
+//
+// When Path is empty, the route becomes a raw TCP reverse mapping on the server entry (no HTTP).
+// Only one TCP route is supported per entry.
 type ReverseRoute struct {
 	Path        string `json:"path"`
 	Target      string `json:"target"`
@@ -37,6 +40,15 @@ func (m *ReverseManager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.mgr.ServeHTTP(w, r)
+}
+
+// ServeEntry listens on listenAddr and serves both HTTP reverse proxy requests (path-based routing)
+// and raw TCP reverse forwarding (requires a route with Path=="") on the same port.
+func (m *ReverseManager) ServeEntry(listenAddr string) error {
+	if m == nil || m.mgr == nil {
+		return fmt.Errorf("reverse manager is required")
+	}
+	return reverse.ServeEntry(listenAddr, m.mgr)
 }
 
 // HandleServerSession handles a reverse client registration connection.
@@ -75,6 +87,7 @@ func ServeReverseClientSession(conn net.Conn, clientID string, routes []ReverseR
 
 	converted := make([]config.ReverseRoute, 0, len(routes))
 	seen := make(map[string]struct{}, len(routes))
+	seenTCP := false
 	for i, r := range routes {
 		r.Path = strings.TrimSpace(r.Path)
 		r.Target = strings.TrimSpace(r.Target)
@@ -83,22 +96,39 @@ func ServeReverseClientSession(conn net.Conn, clientID string, routes []ReverseR
 		if r.Path == "" && r.Target == "" {
 			continue
 		}
-		if r.Path == "" {
-			return fmt.Errorf("reverse route[%d]: missing path", i)
+		if r.Target == "" {
+			if r.Path == "" {
+				return fmt.Errorf("reverse tcp route[%d]: missing target", i)
+			}
+			return fmt.Errorf("reverse route[%d] %q: missing target", i, r.Path)
 		}
+		if _, _, err := net.SplitHostPort(r.Target); err != nil {
+			if r.Path == "" {
+				return fmt.Errorf("reverse tcp route[%d]: invalid target %q: %w", i, r.Target, err)
+			}
+			return fmt.Errorf("reverse route[%d] %q: invalid target %q: %w", i, r.Path, r.Target, err)
+		}
+
+		if r.Path == "" {
+			if seenTCP {
+				return fmt.Errorf("reverse route duplicate tcp mapping")
+			}
+			seenTCP = true
+			converted = append(converted, config.ReverseRoute{
+				Path:        "",
+				Target:      r.Target,
+				StripPrefix: r.StripPrefix,
+				HostHeader:  r.HostHeader,
+			})
+			continue
+		}
+
 		if !strings.HasPrefix(r.Path, "/") {
 			r.Path = "/" + r.Path
 		}
 		r.Path = path.Clean(r.Path)
 		if r.Path != "/" {
 			r.Path = strings.TrimRight(r.Path, "/")
-		}
-
-		if r.Target == "" {
-			return fmt.Errorf("reverse route[%d] %q: missing target", i, r.Path)
-		}
-		if _, _, err := net.SplitHostPort(r.Target); err != nil {
-			return fmt.Errorf("reverse route[%d] %q: invalid target %q: %w", i, r.Path, r.Target, err)
 		}
 
 		if _, ok := seen[r.Path]; ok {

@@ -123,8 +123,8 @@ Client can connect via multiple Sudoku servers (nested tunnels):
 }
 ```
 
-### Reverse Proxy (Expose client HTTP services)
-Expose a client-side HTTP service (behind NAT) via a server-side HTTP entry and path prefix.
+### Reverse Proxy (Expose client services: HTTP + raw TCP)
+Expose a client-side service (behind NAT) via a server-side entry.
 
 Server:
 ```json
@@ -140,6 +140,16 @@ Client:
 }
 ```
 Then access: `http://<server>:8081/gitea` (default `strip_prefix=true`).
+
+Raw TCP forwarding:
+```json
+{
+  "reverse": {
+    "routes": [{ "path": "", "target": "127.0.0.1:25565" }]
+  }
+}
+```
+Then connect your TCP client to `<server>:8081` directly. (Only one TCP route per entry.)
 
 ### Docker (Server)
 Build locally:

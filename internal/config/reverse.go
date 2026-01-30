@@ -21,7 +21,11 @@ type ReverseConfig struct {
 }
 
 type ReverseRoute struct {
-	// Path is the public path prefix. Examples: "/gitea", "/nas".
+	// Path is the public path prefix for HTTP reverse. Examples: "/gitea", "/nas".
+	//
+	// When Path is empty, the route becomes a raw TCP reverse mapping on reverse.listen (no HTTP).
+	// In that case, the server will forward non-HTTP connections to Target.
+	// Only one TCP route is supported per reverse.listen entry.
 	Path string `json:"path"`
 	// Target is the client-side TCP target in "host:port" form. Example: "127.0.0.1:3000".
 	Target string `json:"target"`

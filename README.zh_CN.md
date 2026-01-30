@@ -126,8 +126,8 @@ go build -o sudoku cmd/sudoku-tunnel/main.go
 }
 ```
 
-### 反向代理（将客户端 HTTP 服务暴露到服务端）
-让 NAT 后的客户端把本地 HTTP 服务通过隧道暴露给服务端，再由服务端通过不同路径前缀访问。
+### 反向代理（将客户端服务暴露到服务端：HTTP + 纯 TCP）
+让 NAT 后的客户端把本地服务通过隧道暴露给服务端。
 
 服务端：
 ```json
@@ -143,6 +143,16 @@ go build -o sudoku cmd/sudoku-tunnel/main.go
 }
 ```
 随后访问：`http://<server>:8081/gitea`（默认 `strip_prefix=true`）。
+
+纯 TCP 转发（例如 MC 25565）：
+```json
+{
+  "reverse": {
+    "routes": [{ "path": "", "target": "10.0.0.1:25565" }]
+  }
+}
+```
+此时直接用 TCP 客户端连接 `<server>:8081` 即可（每个 `reverse.listen` 仅支持 1 条 TCP 路由）。
 
 ### Docker（服务端）
 本地构建：

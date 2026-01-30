@@ -23,12 +23,14 @@ type Manager struct {
 
 	routes   map[string]*routeEntry
 	sessions map[*tunnel.MuxClient]*session
+	tcp      *tcpEntry
 }
 
 type session struct {
 	clientID string
 	mux      *tunnel.MuxClient
 	prefixes []string
+	tcp      bool
 }
 
 type routeEntry struct {
@@ -37,6 +39,12 @@ type routeEntry struct {
 	stripPrefix bool
 	hostHeader  string
 	proxy       *httputil.ReverseProxy
+}
+
+type tcpEntry struct {
+	clientID string
+	target   string
+	mux      *tunnel.MuxClient
 }
 
 func NewManager() *Manager {
@@ -70,9 +78,24 @@ func (m *Manager) RegisterSession(clientID string, mux *tunnel.MuxClient, routes
 		m.mu.Unlock()
 		return fmt.Errorf("reverse session already registered")
 	}
+	seenTCP := false
 	for _, r := range routes {
 		prefix := strings.TrimSpace(r.Path)
+		target := strings.TrimSpace(r.Target)
 		if prefix == "" {
+			if target == "" {
+				continue
+			}
+			// Path empty => raw TCP reverse on reverse.listen (no HTTP path prefix).
+			if seenTCP {
+				m.mu.Unlock()
+				return fmt.Errorf("reverse tcp route already set in this session")
+			}
+			seenTCP = true
+			if m.tcp != nil {
+				m.mu.Unlock()
+				return fmt.Errorf("reverse tcp route already registered")
+			}
 			continue
 		}
 		if _, ok := m.routes[prefix]; ok {
@@ -84,7 +107,19 @@ func (m *Manager) RegisterSession(clientID string, mux *tunnel.MuxClient, routes
 	for _, r := range routes {
 		prefix := strings.TrimSpace(r.Path)
 		target := strings.TrimSpace(r.Target)
-		if prefix == "" || target == "" {
+		if prefix == "" {
+			if target == "" {
+				continue
+			}
+			m.tcp = &tcpEntry{
+				clientID: clientID,
+				target:   target,
+				mux:      mux,
+			}
+			sess.tcp = true
+			continue
+		}
+		if target == "" {
 			continue
 		}
 		strip := true
@@ -124,6 +159,9 @@ func (m *Manager) UnregisterSession(mux *tunnel.MuxClient) {
 	sess := m.sessions[mux]
 	if sess != nil {
 		delete(m.sessions, mux)
+		if sess.tcp && m.tcp != nil && m.tcp.mux == mux {
+			m.tcp = nil
+		}
 		for _, p := range sess.prefixes {
 			if ent := m.routes[p]; ent != nil {
 				delete(m.routes, p)
@@ -131,6 +169,32 @@ func (m *Manager) UnregisterSession(mux *tunnel.MuxClient) {
 		}
 	}
 	m.mu.Unlock()
+}
+
+// ServeTCP handles a raw TCP connection by forwarding it through the reverse session.
+//
+// It requires a reverse route with an empty path (Path=="") to be registered.
+func (m *Manager) ServeTCP(conn net.Conn) {
+	if conn == nil {
+		return
+	}
+
+	m.mu.RLock()
+	ent := m.tcp
+	m.mu.RUnlock()
+
+	if ent == nil || ent.mux == nil || strings.TrimSpace(ent.target) == "" {
+		_ = conn.Close()
+		return
+	}
+
+	up, err := ent.mux.Dial(ent.target)
+	if err != nil {
+		_ = conn.Close()
+		return
+	}
+
+	tunnel.PipeConn(conn, up)
 }
 
 func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {

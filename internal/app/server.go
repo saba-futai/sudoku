@@ -5,7 +5,6 @@ import (
 	"io"
 	"log"
 	"net"
-	"net/http"
 	"strings"
 	"time"
 
@@ -31,14 +30,9 @@ func RunServer(cfg *config.Config, tables []*sudoku.Table) {
 		revMgr = reverse.NewManager()
 		revListen := strings.TrimSpace(cfg.Reverse.Listen)
 		go func() {
-			log.Printf("[Reverse] HTTP entry on %s", revListen)
-			srv := &http.Server{
-				Addr:              revListen,
-				Handler:           revMgr,
-				ReadHeaderTimeout: 5 * time.Second,
-			}
-			if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
-				log.Printf("[Reverse] HTTP server error: %v", err)
+			log.Printf("[Reverse] entry on %s", revListen)
+			if err := reverse.ServeEntry(revListen, revMgr); err != nil {
+				log.Printf("[Reverse] entry error: %v", err)
 			}
 		}()
 	}

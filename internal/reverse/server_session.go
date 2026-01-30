@@ -74,14 +74,33 @@ func HandleServerSession(conn net.Conn, userHash string, mgr *Manager) error {
 	// Server-side sanitize/validate (don't trust the client).
 	normalized := make([]config.ReverseRoute, 0, len(hello.Routes))
 	seen := make(map[string]struct{}, len(hello.Routes))
+	seenTCP := false
 	for _, r := range hello.Routes {
 		r.Path = strings.TrimSpace(r.Path)
 		r.Target = strings.TrimSpace(r.Target)
 		r.HostHeader = strings.TrimSpace(r.HostHeader)
 
-		if r.Path == "" || r.Target == "" {
-			return fmt.Errorf("reverse route missing path/target")
+		if r.Path == "" && r.Target == "" {
+			continue
 		}
+		if r.Target == "" {
+			return fmt.Errorf("reverse route missing target")
+		}
+
+		// Path empty => raw TCP reverse on reverse.listen (no HTTP path prefix).
+		// Only one TCP route is supported per server entry.
+		if r.Path == "" {
+			if seenTCP {
+				return fmt.Errorf("reverse route duplicate tcp mapping")
+			}
+			seenTCP = true
+			if _, _, err := net.SplitHostPort(r.Target); err != nil {
+				return fmt.Errorf("reverse tcp route invalid target %q: %w", r.Target, err)
+			}
+			normalized = append(normalized, r)
+			continue
+		}
+
 		if !strings.HasPrefix(r.Path, "/") {
 			r.Path = "/" + r.Path
 		}
