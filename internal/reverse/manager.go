@@ -2,6 +2,7 @@ package reverse
 
 import (
 	"bytes"
+	"compress/gzip"
 	"context"
 	"fmt"
 	"io"
@@ -290,6 +291,11 @@ func newRouteProxy(prefix, target string, stripPrefix bool, hostHeader string, m
 		if prefix != "" && prefix != "/" {
 			req.Header.Set("X-Forwarded-Prefix", prefix)
 		}
+		if stripPrefix && prefix != "" && prefix != "/" {
+			// Many web apps gzip/br their HTML/JS/CSS when the client sends Accept-Encoding.
+			// Subpath support requires response rewriting, so force identity encoding upstream.
+			req.Header.Del("Accept-Encoding")
+		}
 	}
 
 	rp.ModifyResponse = func(resp *http.Response) error {
@@ -425,6 +431,64 @@ func rewriteTextBody(resp *http.Response, prefix string) error {
 		return nil
 	}
 
+	encoding := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding")))
+	if encoding == "gzip" {
+		compressed, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
+		if err != nil {
+			return err
+		}
+		if len(compressed) > maxBody {
+			// Too large to buffer; restore consumed bytes and stream the rest.
+			resp.Body = multiReadCloser{
+				Reader: io.MultiReader(bytes.NewReader(compressed), resp.Body),
+				Closer: resp.Body,
+			}
+			return nil
+		}
+		_ = resp.Body.Close()
+
+		gr, err := gzip.NewReader(bytes.NewReader(compressed))
+		if err != nil {
+			// Invalid gzip; fall back to the original payload.
+			resp.Body = io.NopCloser(bytes.NewReader(compressed))
+			resp.ContentLength = int64(len(compressed))
+			resp.Header.Set("Content-Length", strconv.Itoa(len(compressed)))
+			resp.Header.Del("Transfer-Encoding")
+			return nil
+		}
+		raw, err := io.ReadAll(io.LimitReader(gr, maxBody+1))
+		_ = gr.Close()
+		if err != nil {
+			return err
+		}
+		if len(raw) > maxBody {
+			// Too large after decompressing; keep original gzip body.
+			resp.Body = io.NopCloser(bytes.NewReader(compressed))
+			resp.ContentLength = int64(len(compressed))
+			resp.Header.Set("Content-Length", strconv.Itoa(len(compressed)))
+			resp.Header.Del("Transfer-Encoding")
+			return nil
+		}
+
+		rewritten := rewriteRootAbsolutePaths(raw, prefix)
+		if bytes.Equal(raw, rewritten) {
+			// No changes: keep original gzip response to preserve caching headers/ETags.
+			resp.Body = io.NopCloser(bytes.NewReader(compressed))
+			resp.ContentLength = int64(len(compressed))
+			resp.Header.Set("Content-Length", strconv.Itoa(len(compressed)))
+			resp.Header.Del("Transfer-Encoding")
+			return nil
+		}
+
+		resp.Body = io.NopCloser(bytes.NewReader(rewritten))
+		resp.ContentLength = int64(len(rewritten))
+		resp.Header.Set("Content-Length", strconv.Itoa(len(rewritten)))
+		resp.Header.Del("Transfer-Encoding")
+		resp.Header.Del("Content-Encoding")
+		resp.Header.Del("ETag")
+		return nil
+	}
+
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 	if err != nil {
 		return err
@@ -440,18 +504,19 @@ func rewriteTextBody(resp *http.Response, prefix string) error {
 	_ = resp.Body.Close()
 
 	rewritten := rewriteRootAbsolutePaths(raw, prefix)
-	if !bytes.Equal(raw, rewritten) {
-		resp.Body = io.NopCloser(bytes.NewReader(rewritten))
-		resp.ContentLength = int64(len(rewritten))
-		resp.Header.Set("Content-Length", strconv.Itoa(len(rewritten)))
+	if bytes.Equal(raw, rewritten) {
+		resp.Body = io.NopCloser(bytes.NewReader(raw))
+		resp.ContentLength = int64(len(raw))
+		resp.Header.Set("Content-Length", strconv.Itoa(len(raw)))
 		resp.Header.Del("Transfer-Encoding")
 		return nil
 	}
 
-	resp.Body = io.NopCloser(bytes.NewReader(raw))
-	resp.ContentLength = int64(len(raw))
-	resp.Header.Set("Content-Length", strconv.Itoa(len(raw)))
+	resp.Body = io.NopCloser(bytes.NewReader(rewritten))
+	resp.ContentLength = int64(len(rewritten))
+	resp.Header.Set("Content-Length", strconv.Itoa(len(rewritten)))
 	resp.Header.Del("Transfer-Encoding")
+	resp.Header.Del("ETag")
 	return nil
 }
 
