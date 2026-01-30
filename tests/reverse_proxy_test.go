@@ -117,10 +117,28 @@ func TestReverseProxy_PathPrefix(t *testing.T) {
 	}
 	startSudokuClient(t, clientCfg)
 
+	noFollowClient := &http.Client{
+		Timeout: 5 * time.Second,
+		CheckRedirect: func(req *http.Request, via []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+	resp, err := noFollowClient.Get(fmt.Sprintf("http://%s/gitea", reverseListen))
+	if err != nil {
+		t.Fatalf("reverse redirect: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusPermanentRedirect {
+		t.Fatalf("expected 308 for /gitea redirect, got: %d", resp.StatusCode)
+	}
+	if !strings.HasSuffix(resp.Header.Get("Location"), "/gitea/") {
+		t.Fatalf("expected Location to end with /gitea/, got: %q", resp.Header.Get("Location"))
+	}
+
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
 	// HTML must be rewritten so the browser requests /gitea/assets/... instead of /assets/...
-	resp, err := httpClient.Get(fmt.Sprintf("http://%s/gitea/", reverseListen))
+	resp, err = httpClient.Get(fmt.Sprintf("http://%s/gitea/", reverseListen))
 	if err != nil {
 		t.Fatalf("reverse html: %v", err)
 	}
@@ -148,6 +166,112 @@ func TestReverseProxy_PathPrefix(t *testing.T) {
 		time.Sleep(100 * time.Millisecond)
 	}
 	t.Fatalf("reverse proxy did not become ready")
+}
+
+func TestReverseProxy_PathPrefix_Srcset(t *testing.T) {
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			_, _ = w.Write([]byte(`<html><body><img alt="徽标" src="/assets/logo.png" srcset="/assets/logo.png 1x, /assets/logo@2x.png 2x"></body></html>`))
+		case "/assets/logo.png":
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write([]byte("png1x"))
+		case "/assets/logo@2x.png":
+			w.Header().Set("Content-Type", "image/png")
+			_, _ = w.Write([]byte("png2x"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer origin.Close()
+	originAddr := strings.TrimPrefix(origin.URL, "http://")
+
+	pair, err := crypto.GenerateMasterKey()
+	if err != nil {
+		t.Fatalf("keygen failed: %v", err)
+	}
+	serverKey := crypto.EncodePoint(pair.Public)
+	clientKey := crypto.EncodeScalar(pair.Private)
+
+	ports, err := getFreePorts(3)
+	if err != nil {
+		t.Fatalf("ports: %v", err)
+	}
+	serverPort := ports[0]
+	clientPort := ports[1]
+	reversePort := ports[2]
+
+	reverseListen := fmt.Sprintf("127.0.0.1:%d", reversePort)
+
+	serverCfg := &config.Config{
+		Mode:               "server",
+		Transport:          "tcp",
+		LocalPort:          serverPort,
+		FallbackAddr:       "",
+		Key:                serverKey,
+		AEAD:               "chacha20-poly1305",
+		SuspiciousAction:   "fallback",
+		PaddingMin:         0,
+		PaddingMax:         0,
+		ASCII:              "prefer_ascii",
+		CustomTable:        "xpxvvpvv",
+		EnablePureDownlink: true,
+		HTTPMask: config.HTTPMaskConfig{
+			Disable: true,
+		},
+		Reverse: &config.ReverseConfig{
+			Listen: reverseListen,
+		},
+	}
+	startSudokuServer(t, serverCfg)
+	waitForAddr(t, reverseListen)
+
+	clientCfg := &config.Config{
+		Mode:               "client",
+		Transport:          "tcp",
+		LocalPort:          clientPort,
+		ServerAddress:      fmt.Sprintf("127.0.0.1:%d", serverPort),
+		Key:                clientKey,
+		AEAD:               "chacha20-poly1305",
+		PaddingMin:         0,
+		PaddingMax:         0,
+		ASCII:              "prefer_ascii",
+		CustomTable:        "xpxvvpvv",
+		EnablePureDownlink: true,
+		ProxyMode:          "direct",
+		HTTPMask: config.HTTPMaskConfig{
+			Disable: true,
+		},
+		Reverse: &config.ReverseConfig{
+			ClientID: "r4s",
+			Routes: []config.ReverseRoute{
+				{
+					Path:   "/gitea",
+					Target: originAddr,
+				},
+			},
+		},
+	}
+	startSudokuClient(t, clientCfg)
+
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	resp, err := httpClient.Get(fmt.Sprintf("http://%s/gitea/", reverseListen))
+	if err != nil {
+		t.Fatalf("reverse html: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reverse html status: %d", resp.StatusCode)
+	}
+	html := string(body)
+	if !strings.Contains(html, `srcset="/gitea/assets/logo.png 1x, /gitea/assets/logo@2x.png 2x"`) {
+		t.Fatalf("expected rewritten srcset urls, got: %q", html)
+	}
+	if !strings.Contains(html, `src="/gitea/assets/logo.png"`) {
+		t.Fatalf("expected rewritten img src, got: %q", html)
+	}
 }
 
 func TestReverseProxy_PathPrefix_GzipOrigin(t *testing.T) {

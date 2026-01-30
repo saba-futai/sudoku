@@ -218,6 +218,20 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
+
+	// Ensure the route root is treated as a directory. Many apps use relative asset URLs
+	// (e.g. "static/app.js"); without a trailing slash, browsers resolve them to "/static/...".
+	// Redirecting keeps the app working under a subpath like "/gitea/" or "/netdata/".
+	if entry.prefix != "" && entry.prefix != "/" && path == entry.prefix && r.Method != "" {
+		switch r.Method {
+		case http.MethodGet, http.MethodHead:
+			u := *r.URL
+			u.Path = path + "/"
+			http.Redirect(w, r, u.String(), http.StatusPermanentRedirect)
+			return
+		default:
+		}
+	}
 	entry.proxy.ServeHTTP(w, r)
 }
 
@@ -470,7 +484,7 @@ func rewriteTextBody(resp *http.Response, prefix string) error {
 			return nil
 		}
 
-		rewritten := rewriteRootAbsolutePaths(raw, prefix)
+		rewritten := rewriteTextPayload(ct, raw, prefix)
 		if bytes.Equal(raw, rewritten) {
 			// No changes: keep original gzip response to preserve caching headers/ETags.
 			resp.Body = io.NopCloser(bytes.NewReader(compressed))
@@ -503,7 +517,7 @@ func rewriteTextBody(resp *http.Response, prefix string) error {
 	}
 	_ = resp.Body.Close()
 
-	rewritten := rewriteRootAbsolutePaths(raw, prefix)
+	rewritten := rewriteTextPayload(ct, raw, prefix)
 	if bytes.Equal(raw, rewritten) {
 		resp.Body = io.NopCloser(bytes.NewReader(raw))
 		resp.ContentLength = int64(len(raw))
@@ -518,6 +532,158 @@ func rewriteTextBody(resp *http.Response, prefix string) error {
 	resp.Header.Del("Transfer-Encoding")
 	resp.Header.Del("ETag")
 	return nil
+}
+
+func rewriteTextPayload(contentType string, in []byte, prefix string) []byte {
+	if in == nil {
+		return nil
+	}
+	// Always apply the safe, quote/url() based rewrite.
+	out := rewriteRootAbsolutePaths(in, prefix)
+
+	// HTML needs extra help for attributes like srcset where multiple URLs exist within one quoted value:
+	//   srcset="/a.png 1x, /b.png 2x"
+	// The second URL is preceded by whitespace, not a quote, so it won't be caught by the generic rewrite.
+	if contentType == "text/html" || contentType == "application/xhtml+xml" {
+		out = rewriteHTMLSrcset(out, prefix)
+	}
+	return out
+}
+
+func rewriteHTMLSrcset(in []byte, prefix string) []byte {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" || prefix == "/" {
+		return in
+	}
+	if !strings.HasPrefix(prefix, "/") {
+		prefix = "/" + prefix
+	}
+	prefix = strings.TrimRight(prefix, "/")
+	if prefix == "" || prefix == "/" {
+		return in
+	}
+	p := []byte(prefix)
+
+	var (
+		out      bytes.Buffer
+		last     int
+		modified bool
+	)
+	out.Grow(len(in) + len(in)/32)
+
+	for i := 0; i < len(in); i++ {
+		// Case-insensitive match for "srcset"
+		if lowerASCII(in[i]) != 's' {
+			continue
+		}
+		if i+6 >= len(in) {
+			break
+		}
+		if lowerASCII(in[i+1]) != 'r' || lowerASCII(in[i+2]) != 'c' || lowerASCII(in[i+3]) != 's' || lowerASCII(in[i+4]) != 'e' || lowerASCII(in[i+5]) != 't' {
+			continue
+		}
+
+		j := i + 6
+		// Optional whitespace
+		for j < len(in) && isSpace(in[j]) {
+			j++
+		}
+		if j >= len(in) || in[j] != '=' {
+			continue
+		}
+		j++
+		for j < len(in) && isSpace(in[j]) {
+			j++
+		}
+		if j >= len(in) {
+			break
+		}
+
+		quote := in[j]
+		if quote != '"' && quote != '\'' {
+			continue
+		}
+		valStart := j + 1
+		valEnd := valStart
+		for valEnd < len(in) && in[valEnd] != quote {
+			valEnd++
+		}
+		if valEnd >= len(in) {
+			break
+		}
+
+		val := in[valStart:valEnd]
+		newVal := rewriteSrcsetValue(val, p)
+		if bytes.Equal(val, newVal) {
+			i = valEnd
+			continue
+		}
+
+		// Flush bytes up to attribute value start, then write modified value.
+		out.Write(in[last:valStart])
+		out.Write(newVal)
+		last = valEnd
+		i = valEnd
+		modified = true
+	}
+
+	if !modified {
+		return in
+	}
+	out.Write(in[last:])
+	return out.Bytes()
+}
+
+func rewriteSrcsetValue(val []byte, prefix []byte) []byte {
+	if len(val) == 0 || len(prefix) == 0 {
+		return val
+	}
+	var (
+		out  bytes.Buffer
+		last int
+	)
+	out.Grow(len(val) + len(val)/16)
+
+	for i := 0; i < len(val); i++ {
+		if val[i] != '/' {
+			continue
+		}
+		if i+1 < len(val) && val[i+1] == '/' {
+			// Protocol-relative.
+			continue
+		}
+
+		// URL tokens in srcset start at the beginning, or after a comma + optional whitespace.
+		start := false
+		if i == 0 {
+			start = true
+		} else {
+			k := i - 1
+			for k >= 0 && isSpace(val[k]) {
+				k--
+			}
+			if k < 0 || val[k] == ',' {
+				start = true
+			}
+		}
+		if !start {
+			continue
+		}
+
+		if bytes.HasPrefix(val[i:], prefix) {
+			continue
+		}
+
+		out.Write(val[last:i])
+		out.Write(prefix)
+		last = i
+	}
+
+	if last == 0 {
+		return val
+	}
+	out.Write(val[last:])
+	return out.Bytes()
 }
 
 type multiReadCloser struct {
