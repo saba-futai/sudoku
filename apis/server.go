@@ -31,6 +31,7 @@ import (
 	"time"
 
 	"github.com/saba-futai/sudoku/internal/protocol"
+	"github.com/saba-futai/sudoku/pkg/connutil"
 	"github.com/saba-futai/sudoku/pkg/crypto"
 	"github.com/saba-futai/sudoku/pkg/obfs/httpmask"
 	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
@@ -97,7 +98,7 @@ func probeHandshakeBytes(probe []byte, cfg *ProtocolConfig, table *sudoku.Table)
 	}
 	ts := int64(binary.BigEndian.Uint64(handshakeBuf[:8]))
 	now := time.Now().Unix()
-	if abs(now-ts) > 60 {
+	if connutil.AbsInt64(now-ts) > 60 {
 		return fmt.Errorf("timestamp skew/replay detected: server_time=%d client_time=%d", now, ts)
 	}
 
@@ -214,13 +215,6 @@ func ServerHandshakeWithUserHash(rawConn net.Conn, cfg *ProtocolConfig) (net.Con
 	}
 
 	return conn, targetAddr, userHash, nil
-}
-
-func abs(x int64) int64 {
-	if x < 0 {
-		return -x
-	}
-	return x
 }
 
 // ServerHandshakeAuto upgrades the connection and detects whether it is a UoT (UDP-over-TCP) session.
@@ -374,7 +368,7 @@ func serverHandshakeCoreWithUserHash(rawConn net.Conn, cfg *ProtocolConfig) (net
 
 	ts := int64(binary.BigEndian.Uint64(handshakeBuf[:8]))
 	now := time.Now().Unix()
-	if abs(now-ts) > 60 {
+	if connutil.AbsInt64(now-ts) > 60 {
 		cConn.Close()
 		return nil, "", nil, fail(fmt.Errorf("timestamp skew/replay detected: server_time=%d client_time=%d", now, ts))
 	}

@@ -99,12 +99,13 @@ jobs:
           merge-multiple: true
           path: dist
 
-      - name: Upload Release Assets
-        uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*
+      - name: Upload Release Assets (clobber)
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ github.ref_name }}"
+          gh release view "$TAG" >/dev/null 2>&1 || gh release create "$TAG" --title "$TAG" --generate-notes
+          gh release upload "$TAG" dist/* --clobber
 
   docker:
     name: Build & Push Docker Image

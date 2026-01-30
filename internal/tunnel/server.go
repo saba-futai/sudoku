@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/saba-futai/sudoku/internal/config"
+	"github.com/saba-futai/sudoku/pkg/connutil"
 	"github.com/saba-futai/sudoku/pkg/crypto"
 	"github.com/saba-futai/sudoku/pkg/obfs/httpmask"
 	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
@@ -40,23 +41,17 @@ type BufferedConn struct {
 }
 
 func (bc *BufferedConn) CloseWrite() error {
-	if bc == nil || bc.Conn == nil {
+	if bc == nil {
 		return nil
 	}
-	if cw, ok := bc.Conn.(interface{ CloseWrite() error }); ok {
-		return cw.CloseWrite()
-	}
-	return nil
+	return connutil.TryCloseWrite(bc.Conn)
 }
 
 func (bc *BufferedConn) CloseRead() error {
-	if bc == nil || bc.Conn == nil {
+	if bc == nil {
 		return nil
 	}
-	if cr, ok := bc.Conn.(interface{ CloseRead() error }); ok {
-		return cr.CloseRead()
-	}
-	return nil
+	return connutil.TryCloseRead(bc.Conn)
 }
 
 func (bc *BufferedConn) Read(p []byte) (n int, err error) {
@@ -76,23 +71,17 @@ type PreBufferedConn struct {
 }
 
 func (p *PreBufferedConn) CloseWrite() error {
-	if p == nil || p.Conn == nil {
+	if p == nil {
 		return nil
 	}
-	if cw, ok := p.Conn.(interface{ CloseWrite() error }); ok {
-		return cw.CloseWrite()
-	}
-	return nil
+	return connutil.TryCloseWrite(p.Conn)
 }
 
 func (p *PreBufferedConn) CloseRead() error {
-	if p == nil || p.Conn == nil {
+	if p == nil {
 		return nil
 	}
-	if cr, ok := p.Conn.(interface{ CloseRead() error }); ok {
-		return cr.CloseRead()
-	}
-	return nil
+	return connutil.TryCloseRead(p.Conn)
 }
 
 // NewPreBufferedConn replays the provided bytes before reading from the underlying connection.
@@ -174,23 +163,17 @@ type recordedConn struct {
 }
 
 func (rc *recordedConn) CloseWrite() error {
-	if rc == nil || rc.Conn == nil {
+	if rc == nil {
 		return nil
 	}
-	if cw, ok := rc.Conn.(interface{ CloseWrite() error }); ok {
-		return cw.CloseWrite()
-	}
-	return nil
+	return connutil.TryCloseWrite(rc.Conn)
 }
 
 func (rc *recordedConn) CloseRead() error {
-	if rc == nil || rc.Conn == nil {
+	if rc == nil {
 		return nil
 	}
-	if cr, ok := rc.Conn.(interface{ CloseRead() error }); ok {
-		return cr.CloseRead()
-	}
-	return nil
+	return connutil.TryCloseRead(rc.Conn)
 }
 
 func (rc *recordedConn) GetBufferedAndRecorded() []byte {
@@ -203,23 +186,17 @@ type prefixedRecorderConn struct {
 }
 
 func (pc *prefixedRecorderConn) CloseWrite() error {
-	if pc == nil || pc.Conn == nil {
+	if pc == nil {
 		return nil
 	}
-	if cw, ok := pc.Conn.(interface{ CloseWrite() error }); ok {
-		return cw.CloseWrite()
-	}
-	return nil
+	return connutil.TryCloseWrite(pc.Conn)
 }
 
 func (pc *prefixedRecorderConn) CloseRead() error {
-	if pc == nil || pc.Conn == nil {
+	if pc == nil {
 		return nil
 	}
-	if cr, ok := pc.Conn.(interface{ CloseRead() error }); ok {
-		return cr.CloseRead()
-	}
-	return nil
+	return connutil.TryCloseRead(pc.Conn)
 }
 
 func (pc *prefixedRecorderConn) GetBufferedAndRecorded() []byte {
@@ -258,7 +235,7 @@ func probeHandshakeBytes(probe []byte, cfg *config.Config, table *sudoku.Table) 
 		return err
 	}
 	ts := int64(binary.BigEndian.Uint64(handshakeBuf[:8]))
-	if abs(time.Now().Unix()-ts) > 60 {
+	if connutil.AbsInt64(time.Now().Unix()-ts) > 60 {
 		return fmt.Errorf("time skew/replay")
 	}
 
@@ -420,7 +397,7 @@ func HandshakeAndUpgradeWithTablesMeta(rawConn net.Conn, cfg *config.Config, tab
 	}
 
 	ts := int64(binary.BigEndian.Uint64(handshakeBuf[:8]))
-	if abs(time.Now().Unix()-ts) > 60 {
+	if connutil.AbsInt64(time.Now().Unix()-ts) > 60 {
 		rawConn.SetReadDeadline(time.Time{})
 		return nil, nil, &SuspiciousError{Err: fmt.Errorf("time skew/replay"), Conn: &prefixedRecorderConn{Conn: sConn, prefix: httpHeaderData}}
 	}
@@ -439,11 +416,4 @@ func HandshakeAndUpgradeWithTablesMeta(rawConn net.Conn, cfg *config.Config, tab
 
 	sConn.StopRecording()
 	return cConn, meta, nil
-}
-
-func abs(x int64) int64 {
-	if x < 0 {
-		return -x
-	}
-	return x
 }

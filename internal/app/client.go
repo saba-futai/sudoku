@@ -18,6 +18,7 @@ import (
 	"github.com/saba-futai/sudoku/internal/config"
 	"github.com/saba-futai/sudoku/internal/protocol"
 	"github.com/saba-futai/sudoku/internal/tunnel"
+	"github.com/saba-futai/sudoku/pkg/connutil"
 	"github.com/saba-futai/sudoku/pkg/crypto"
 	"github.com/saba-futai/sudoku/pkg/geodata"
 	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
@@ -30,23 +31,17 @@ type PeekConn struct {
 }
 
 func (c *PeekConn) CloseWrite() error {
-	if c == nil || c.Conn == nil {
+	if c == nil {
 		return nil
 	}
-	if cw, ok := c.Conn.(interface{ CloseWrite() error }); ok {
-		return cw.CloseWrite()
-	}
-	return nil
+	return connutil.TryCloseWrite(c.Conn)
 }
 
 func (c *PeekConn) CloseRead() error {
-	if c == nil || c.Conn == nil {
+	if c == nil {
 		return nil
 	}
-	if cr, ok := c.Conn.(interface{ CloseRead() error }); ok {
-		return cr.CloseRead()
-	}
-	return nil
+	return connutil.TryCloseRead(c.Conn)
 }
 
 func (c *PeekConn) Read(p []byte) (n int, err error) {

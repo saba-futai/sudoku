@@ -20,6 +20,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/saba-futai/sudoku/pkg/connutil"
 )
 
 type TunnelMode string
@@ -1461,23 +1463,17 @@ type preBufferedConn struct {
 }
 
 func (p *preBufferedConn) CloseWrite() error {
-	if p == nil || p.Conn == nil {
+	if p == nil {
 		return nil
 	}
-	if cw, ok := p.Conn.(interface{ CloseWrite() error }); ok {
-		return cw.CloseWrite()
-	}
-	return nil
+	return connutil.TryCloseWrite(p.Conn)
 }
 
 func (p *preBufferedConn) CloseRead() error {
-	if p == nil || p.Conn == nil {
+	if p == nil {
 		return nil
 	}
-	if cr, ok := p.Conn.(interface{ CloseRead() error }); ok {
-		return cr.CloseRead()
-	}
-	return nil
+	return connutil.TryCloseRead(p.Conn)
 }
 
 func newPreBufferedConn(conn net.Conn, pre []byte) *preBufferedConn {

@@ -2,12 +2,12 @@ package sudoku
 
 import (
 	"bufio"
-	crypto_rand "crypto/rand"
-	"encoding/binary"
 	"io"
 	"math/rand"
 	"net"
 	"sync"
+
+	"github.com/saba-futai/sudoku/pkg/connutil"
 )
 
 const (
@@ -45,32 +45,21 @@ type PackedConn struct {
 }
 
 func (pc *PackedConn) CloseWrite() error {
-	if pc == nil || pc.Conn == nil {
+	if pc == nil {
 		return nil
 	}
-	if cw, ok := pc.Conn.(interface{ CloseWrite() error }); ok {
-		return cw.CloseWrite()
-	}
-	return nil
+	return connutil.TryCloseWrite(pc.Conn)
 }
 
 func (pc *PackedConn) CloseRead() error {
-	if pc == nil || pc.Conn == nil {
+	if pc == nil {
 		return nil
 	}
-	if cr, ok := pc.Conn.(interface{ CloseRead() error }); ok {
-		return cr.CloseRead()
-	}
-	return nil
+	return connutil.TryCloseRead(pc.Conn)
 }
 
 func NewPackedConn(c net.Conn, table *Table, pMin, pMax int) *PackedConn {
-	var seedBytes [8]byte
-	if _, err := crypto_rand.Read(seedBytes[:]); err != nil {
-		binary.BigEndian.PutUint64(seedBytes[:], uint64(rand.Int63()))
-	}
-	seed := int64(binary.BigEndian.Uint64(seedBytes[:]))
-	localRng := rand.New(rand.NewSource(seed))
+	localRng := newSeededRand()
 
 	pc := &PackedConn{
 		Conn:             c,
@@ -257,16 +246,7 @@ func (pc *PackedConn) Flush() error {
 // Read 优化版：减少切片操作，避免内存泄漏
 func (pc *PackedConn) Read(p []byte) (int, error) {
 	// 1. 优先返回待处理区的数据
-	if len(pc.pendingData) > 0 {
-		n := copy(p, pc.pendingData)
-		if n == len(pc.pendingData) {
-			pc.pendingData = pc.pendingData[:0]
-		} else {
-			// 优化：移动剩余数据到数组头部，避免切片指向中间导致内存泄漏
-			remaining := len(pc.pendingData) - n
-			copy(pc.pendingData, pc.pendingData[n:])
-			pc.pendingData = pc.pendingData[:remaining]
-		}
+	if n, ok := drainPending(p, &pc.pendingData); ok {
 		return n, nil
 	}
 
@@ -325,14 +305,7 @@ func (pc *PackedConn) Read(p []byte) (int, error) {
 	}
 
 	// 3. 返回解码后的数据 - 优化：避免底层数组泄漏
-	n := copy(p, pc.pendingData)
-	if n == len(pc.pendingData) {
-		pc.pendingData = pc.pendingData[:0]
-	} else {
-		remaining := len(pc.pendingData) - n
-		copy(pc.pendingData, pc.pendingData[n:])
-		pc.pendingData = pc.pendingData[:remaining]
-	}
+	n, _ := drainPending(p, &pc.pendingData)
 	return n, nil
 }
 

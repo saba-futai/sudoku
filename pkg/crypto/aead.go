@@ -12,6 +12,8 @@ import (
 	"io"
 	"net"
 
+	"github.com/saba-futai/sudoku/pkg/connutil"
+
 	"golang.org/x/crypto/chacha20poly1305"
 )
 
@@ -23,23 +25,17 @@ type AEADConn struct {
 }
 
 func (cc *AEADConn) CloseWrite() error {
-	if cc == nil || cc.Conn == nil {
+	if cc == nil {
 		return nil
 	}
-	if cw, ok := cc.Conn.(interface{ CloseWrite() error }); ok {
-		return cw.CloseWrite()
-	}
-	return nil
+	return connutil.TryCloseWrite(cc.Conn)
 }
 
 func (cc *AEADConn) CloseRead() error {
-	if cc == nil || cc.Conn == nil {
+	if cc == nil {
 		return nil
 	}
-	if cr, ok := cc.Conn.(interface{ CloseRead() error }); ok {
-		return cr.CloseRead()
-	}
-	return nil
+	return connutil.TryCloseRead(cc.Conn)
 }
 
 func NewAEADConn(c net.Conn, key string, method string) (*AEADConn, error) {

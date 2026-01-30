@@ -3,12 +3,11 @@ package sudoku
 import (
 	"bufio"
 	"bytes"
-	crypto_rand "crypto/rand"
-	"encoding/binary"
-	"errors"
 	"math/rand"
 	"net"
 	"sync"
+
+	"github.com/saba-futai/sudoku/pkg/connutil"
 )
 
 const IOBufferSize = 32 * 1024
@@ -57,32 +56,21 @@ type Conn struct {
 }
 
 func (sc *Conn) CloseWrite() error {
-	if sc == nil || sc.Conn == nil {
+	if sc == nil {
 		return nil
 	}
-	if cw, ok := sc.Conn.(interface{ CloseWrite() error }); ok {
-		return cw.CloseWrite()
-	}
-	return nil
+	return connutil.TryCloseWrite(sc.Conn)
 }
 
 func (sc *Conn) CloseRead() error {
-	if sc == nil || sc.Conn == nil {
+	if sc == nil {
 		return nil
 	}
-	if cr, ok := sc.Conn.(interface{ CloseRead() error }); ok {
-		return cr.CloseRead()
-	}
-	return nil
+	return connutil.TryCloseRead(sc.Conn)
 }
 
 func NewConn(c net.Conn, table *Table, pMin, pMax int, record bool) *Conn {
-	var seedBytes [8]byte
-	if _, err := crypto_rand.Read(seedBytes[:]); err != nil {
-		binary.BigEndian.PutUint64(seedBytes[:], uint64(rand.Int63()))
-	}
-	seed := int64(binary.BigEndian.Uint64(seedBytes[:]))
-	localRng := rand.New(rand.NewSource(seed))
+	localRng := newSeededRand()
 
 	sc := &Conn{
 		Conn:             c,
@@ -168,13 +156,7 @@ func (sc *Conn) Write(p []byte) (n int, err error) {
 }
 
 func (sc *Conn) Read(p []byte) (n int, err error) {
-	if len(sc.pendingData) > 0 {
-		n = copy(p, sc.pendingData)
-		if n == len(sc.pendingData) {
-			sc.pendingData = sc.pendingData[:0]
-		} else {
-			sc.pendingData = sc.pendingData[n:]
-		}
+	if n, ok := drainPending(p, &sc.pendingData); ok {
 		return n, nil
 	}
 
@@ -202,7 +184,7 @@ func (sc *Conn) Read(p []byte) (n int, err error) {
 					key := packHintsToKey([4]byte{sc.hintBuf[0], sc.hintBuf[1], sc.hintBuf[2], sc.hintBuf[3]})
 					val, ok := sc.table.DecodeMap[key]
 					if !ok {
-						return 0, errors.New("INVALID_SUDOKU_MAP_MISS")
+						return 0, ErrInvalidSudokuMapMiss
 					}
 					sc.pendingData = append(sc.pendingData, val)
 					sc.hintBuf = sc.hintBuf[:0]
@@ -218,11 +200,6 @@ func (sc *Conn) Read(p []byte) (n int, err error) {
 		}
 	}
 
-	n = copy(p, sc.pendingData)
-	if n == len(sc.pendingData) {
-		sc.pendingData = sc.pendingData[:0]
-	} else {
-		sc.pendingData = sc.pendingData[n:]
-	}
+	n, _ = drainPending(p, &sc.pendingData)
 	return n, nil
 }
