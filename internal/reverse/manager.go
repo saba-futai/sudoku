@@ -212,11 +212,23 @@ func (m *Manager) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	m.mu.RLock()
 	entry := m.matchLocked(path)
+	if entry == nil {
+		entry = m.matchByRefererLocked(r)
+	}
 	m.mu.RUnlock()
 
 	if entry == nil || entry.proxy == nil {
 		http.NotFound(w, r)
 		return
+	}
+
+	// If the request path doesn't contain a reverse prefix but a Referer does (common for
+	// root-absolute assets/API calls like "/static/app.js" or "/api/foo"), rewrite it into the
+	// correct subpath so routing works without mutating response bodies.
+	if entry.prefix != "" && entry.prefix != "/" && pathPrefixMatch(path, entry.prefix) == false {
+		r.URL.Path = entry.prefix + path
+		r.URL.RawPath = ""
+		path = r.URL.Path
 	}
 
 	// Ensure the route root is treated as a directory. Many apps use relative asset URLs
@@ -253,6 +265,28 @@ func (m *Manager) matchLocked(reqPath string) *routeEntry {
 		}
 	}
 	return best
+}
+
+func (m *Manager) matchByRefererLocked(r *http.Request) *routeEntry {
+	if r == nil {
+		return nil
+	}
+	ref := strings.TrimSpace(r.Header.Get("Referer"))
+	if ref == "" {
+		return nil
+	}
+	u, err := url.Parse(ref)
+	if err != nil {
+		return nil
+	}
+	refPath := u.EscapedPath()
+	if refPath == "" {
+		refPath = u.Path
+	}
+	if refPath == "" {
+		refPath = "/"
+	}
+	return m.matchLocked(refPath)
 }
 
 func pathPrefixMatch(path, prefix string) bool {
@@ -425,6 +459,12 @@ func rewriteTextBody(resp *http.Response, prefix string) error {
 		return nil
 	}
 
+	// Avoid corrupting opaque encodings (br/zstd/deflate/etc). We only handle gzip.
+	encoding := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding")))
+	if encoding != "" && encoding != "identity" && encoding != "gzip" {
+		return nil
+	}
+
 	const maxBody = 8 << 20
 	if resp.ContentLength > maxBody {
 		return nil
@@ -444,8 +484,12 @@ func rewriteTextBody(resp *http.Response, prefix string) error {
 		// Never buffer/modify SSE.
 		return nil
 	}
+	if isJavaScriptContentType(ct) {
+		// JS rewriting is fragile (regex literals, minifiers, etc.) and can break apps.
+		// Instead, rely on Referer-based routing for root-absolute API/asset calls.
+		return nil
+	}
 
-	encoding := strings.ToLower(strings.TrimSpace(resp.Header.Get("Content-Encoding")))
 	if encoding == "gzip" {
 		compressed, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
 		if err != nil {
@@ -711,6 +755,19 @@ func isRewritableContentType(ct string) bool {
 	}
 }
 
+func isJavaScriptContentType(ct string) bool {
+	switch ct {
+	case "application/javascript":
+		return true
+	case "application/x-javascript":
+		return true
+	case "text/javascript":
+		return true
+	default:
+		return false
+	}
+}
+
 func rewriteRootAbsolutePaths(in []byte, prefix string) []byte {
 	prefix = strings.TrimSpace(prefix)
 	if prefix == "" || prefix == "/" {
@@ -765,16 +822,6 @@ func isRootPathContext(b []byte, slashIndex int) bool {
 	switch prev {
 	case '"', '\'', '`':
 		return true
-	case '\\':
-		// JSON/JS may escape slashes as "\/". Treat a leading escaped slash in a quoted string
-		// as a root-absolute path start.
-		if slashIndex >= 2 {
-			switch b[slashIndex-2] {
-			case '"', '\'', '`':
-				return true
-			default:
-			}
-		}
 	default:
 	}
 

@@ -274,12 +274,14 @@ func TestReverseProxy_PathPrefix_Srcset(t *testing.T) {
 	}
 }
 
-func TestReverseProxy_PathPrefix_JSBacktickAndEscapedSlash(t *testing.T) {
+func TestReverseProxy_RefererFallback_RootPaths(t *testing.T) {
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/app.js":
 			w.Header().Set("Content-Type", "application/javascript")
-			_, _ = w.Write([]byte("fetch(`/api/ping`); const x=\"\\/api\\/ping\";"))
+			// Contains a regex literal with "'\\/api\\/...'" which previously broke when JS rewriting
+			// attempted to insert prefixes into escaped slashes.
+			_, _ = w.Write([]byte("fetch(`/api/ping`); const re=/'\\\\/api\\\\/ping'/g;"))
 		case "/api/ping":
 			w.Header().Set("Content-Type", "text/plain")
 			_, _ = w.Write([]byte("pong"))
@@ -359,6 +361,8 @@ func TestReverseProxy_PathPrefix_JSBacktickAndEscapedSlash(t *testing.T) {
 	startSudokuClient(t, clientCfg)
 
 	httpClient := &http.Client{Timeout: 5 * time.Second}
+
+	// JS should not be rewritten (to avoid breaking regex/minified code).
 	resp, err := httpClient.Get(fmt.Sprintf("http://%s/gitea/app.js", reverseListen))
 	if err != nil {
 		t.Fatalf("reverse js: %v", err)
@@ -369,11 +373,41 @@ func TestReverseProxy_PathPrefix_JSBacktickAndEscapedSlash(t *testing.T) {
 		t.Fatalf("reverse js status: %d", resp.StatusCode)
 	}
 	js := string(body)
-	if !strings.Contains(js, "fetch(`/gitea/api/ping`)") {
-		t.Fatalf("expected rewritten template literal, got: %q", js)
+	if !strings.Contains(js, "fetch(`/api/ping`)") {
+		t.Fatalf("expected js to remain unchanged, got: %q", js)
 	}
-	if !strings.Contains(js, "const x=\"\\/gitea/api\\/ping\"") {
-		t.Fatalf("expected rewritten escaped slash string, got: %q", js)
+	if !strings.Contains(js, "const re=/'\\\\/api\\\\/ping'/g") {
+		t.Fatalf("expected regex literal to remain unchanged, got: %q", js)
+	}
+
+	// Root-absolute asset/API calls should still work via Referer-based routing.
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s/app.js", reverseListen), nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Referer", fmt.Sprintf("http://%s/gitea/", reverseListen))
+	resp, err = httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("reverse referer js: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reverse referer js status: %d", resp.StatusCode)
+	}
+
+	req, err = http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s/api/ping", reverseListen), nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Referer", fmt.Sprintf("http://%s/gitea/", reverseListen))
+	resp, err = httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("reverse referer api ping: %v", err)
+	}
+	pong, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || string(pong) != "pong" {
+		t.Fatalf("expected pong, got status=%d body=%q", resp.StatusCode, string(pong))
 	}
 }
 
@@ -524,13 +558,33 @@ func TestReverseProxy_PathPrefix_GzipOrigin(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("reverse js status: %d", resp.StatusCode)
 	}
-	if !strings.Contains(string(jsBytes), `fetch("/gitea/api/ping")`) {
-		t.Fatalf("expected rewritten fetch path, got: %q", string(jsBytes))
+	if !strings.Contains(string(jsBytes), `fetch("/api/ping")`) {
+		t.Fatalf("expected js to remain unchanged, got: %q", string(jsBytes))
 	}
 
-	resp, err = httpClient.Get(fmt.Sprintf("http://%s/gitea/api/ping", reverseListen))
+	// Root-absolute requests should route correctly using Referer.
+	req, err := http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s/static/js/app.js", reverseListen), nil)
 	if err != nil {
-		t.Fatalf("reverse api ping: %v", err)
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Referer", fmt.Sprintf("http://%s/gitea/", reverseListen))
+	resp, err = httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("reverse referer js: %v", err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reverse referer js status: %d", resp.StatusCode)
+	}
+
+	req, err = http.NewRequest(http.MethodGet, fmt.Sprintf("http://%s/api/ping", reverseListen), nil)
+	if err != nil {
+		t.Fatalf("new request: %v", err)
+	}
+	req.Header.Set("Referer", fmt.Sprintf("http://%s/gitea/", reverseListen))
+	resp, err = httpClient.Do(req)
+	if err != nil {
+		t.Fatalf("reverse referer api ping: %v", err)
 	}
 	pong, _ := io.ReadAll(resp.Body)
 	_ = resp.Body.Close()
