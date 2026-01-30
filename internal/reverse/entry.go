@@ -61,13 +61,24 @@ func ServeEntry(listenAddr string, mgr *Manager) error {
 
 			var peek [4]byte
 			_ = raw.SetReadDeadline(time.Now().Add(5 * time.Second))
-			if _, err := io.ReadFull(raw, peek[:]); err != nil {
+			n, err := io.ReadFull(raw, peek[:])
+			_ = raw.SetReadDeadline(time.Time{})
+			if err != nil {
+				// For raw TCP forwarding, the protocol might be "server-first" (client sends nothing).
+				// If we time out while sniffing, fall back to TCP when possible.
+				if ne, ok := err.(net.Error); ok && ne.Timeout() {
+					if n > 0 {
+						mgr.ServeTCP(tunnel.NewPreBufferedConn(raw, peek[:n]))
+						return
+					}
+					mgr.ServeTCP(raw)
+					return
+				}
 				_ = raw.Close()
 				return
 			}
-			_ = raw.SetReadDeadline(time.Time{})
 
-			conn := tunnel.NewPreBufferedConn(raw, peek[:])
+			conn := tunnel.NewPreBufferedConn(raw, peek[:n])
 			if httpmask.LooksLikeHTTPRequestStart(peek[:]) {
 				if !httpLn.enqueue(conn) {
 					_ = conn.Close()
