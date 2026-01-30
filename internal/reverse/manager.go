@@ -1,12 +1,15 @@
 package reverse
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"net/http/httputil"
 	"net/url"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -225,6 +228,21 @@ func newRouteProxy(prefix, target string, stripPrefix bool, hostHeader string, m
 		}
 	}
 
+	rp.ModifyResponse = func(resp *http.Response) error {
+		// When we strip the prefix for upstream routing, we need to re-add it for browsers:
+		// - absolute redirects (Location: /foo)
+		// - cookie paths (Path=/)
+		// - root-absolute asset URLs in HTML/CSS/JS ("/assets/...", url(/assets/...))
+		if stripPrefix && prefix != "" && prefix != "/" {
+			rewriteLocation(resp, prefix)
+			rewriteSetCookiePath(resp, prefix)
+			if err := rewriteTextBody(resp, prefix); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
 	rp.ErrorHandler = func(w http.ResponseWriter, r *http.Request, err error) {
 		// Avoid leaking internal details; the server logs should carry the rest.
 		http.Error(w, "bad gateway", http.StatusBadGateway)
@@ -258,4 +276,233 @@ func stripPathPrefix(reqPath, prefix string) string {
 		return "/"
 	}
 	return reqPath
+}
+
+func rewriteLocation(resp *http.Response, prefix string) {
+	if resp == nil || resp.Header == nil || prefix == "" || prefix == "/" {
+		return
+	}
+	loc := strings.TrimSpace(resp.Header.Get("Location"))
+	if loc == "" {
+		return
+	}
+	// Only rewrite root-absolute redirects.
+	if !strings.HasPrefix(loc, "/") || strings.HasPrefix(loc, "//") {
+		return
+	}
+	if strings.HasPrefix(loc, prefix+"/") || loc == prefix {
+		return
+	}
+	resp.Header.Set("Location", prefix+loc)
+}
+
+func rewriteSetCookiePath(resp *http.Response, prefix string) {
+	if resp == nil || resp.Header == nil || prefix == "" || prefix == "/" {
+		return
+	}
+	values := resp.Header.Values("Set-Cookie")
+	if len(values) == 0 {
+		return
+	}
+
+	out := make([]string, 0, len(values))
+	for _, v := range values {
+		parts := strings.Split(v, ";")
+		for i := range parts {
+			part := strings.TrimSpace(parts[i])
+			if part == "" {
+				continue
+			}
+			if len(part) < 5 {
+				continue
+			}
+			// Case-insensitive "Path="
+			if strings.EqualFold(part[:5], "Path=") {
+				pathVal := strings.TrimSpace(part[5:])
+				if strings.HasPrefix(pathVal, "/") && !strings.HasPrefix(pathVal, "//") {
+					if strings.HasPrefix(pathVal, prefix+"/") || pathVal == prefix {
+						continue
+					}
+					parts[i] = "Path=" + prefix + pathVal
+				}
+			}
+		}
+		out = append(out, strings.Join(parts, ";"))
+	}
+
+	resp.Header.Del("Set-Cookie")
+	for _, v := range out {
+		resp.Header.Add("Set-Cookie", v)
+	}
+}
+
+func rewriteTextBody(resp *http.Response, prefix string) error {
+	if resp == nil || resp.Body == nil || resp.Header == nil || prefix == "" || prefix == "/" {
+		return nil
+	}
+
+	const maxBody = 8 << 20
+	if resp.ContentLength > maxBody {
+		return nil
+	}
+
+	ct := strings.ToLower(resp.Header.Get("Content-Type"))
+	if ct == "" {
+		return nil
+	}
+	if i := strings.Index(ct, ";"); i >= 0 {
+		ct = strings.TrimSpace(ct[:i])
+	}
+	if !isRewritableContentType(ct) {
+		return nil
+	}
+	if ct == "text/event-stream" {
+		// Never buffer/modify SSE.
+		return nil
+	}
+
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, maxBody+1))
+	if err != nil {
+		return err
+	}
+	if len(raw) > maxBody {
+		// Too large to buffer; restore consumed bytes and stream the rest.
+		resp.Body = multiReadCloser{
+			Reader: io.MultiReader(bytes.NewReader(raw), resp.Body),
+			Closer: resp.Body,
+		}
+		return nil
+	}
+	_ = resp.Body.Close()
+
+	rewritten := rewriteRootAbsolutePaths(raw, prefix)
+	if !bytes.Equal(raw, rewritten) {
+		resp.Body = io.NopCloser(bytes.NewReader(rewritten))
+		resp.ContentLength = int64(len(rewritten))
+		resp.Header.Set("Content-Length", strconv.Itoa(len(rewritten)))
+		resp.Header.Del("Transfer-Encoding")
+		return nil
+	}
+
+	resp.Body = io.NopCloser(bytes.NewReader(raw))
+	resp.ContentLength = int64(len(raw))
+	resp.Header.Set("Content-Length", strconv.Itoa(len(raw)))
+	resp.Header.Del("Transfer-Encoding")
+	return nil
+}
+
+type multiReadCloser struct {
+	io.Reader
+	io.Closer
+}
+
+func isRewritableContentType(ct string) bool {
+	switch {
+	case strings.HasPrefix(ct, "text/"):
+		// Covers text/html, text/css, text/javascript, etc.
+		return true
+	case ct == "application/javascript":
+		return true
+	case ct == "application/x-javascript":
+		return true
+	case ct == "application/json":
+		return true
+	case ct == "application/manifest+json":
+		return true
+	case ct == "image/svg+xml":
+		return true
+	default:
+		return false
+	}
+}
+
+func rewriteRootAbsolutePaths(in []byte, prefix string) []byte {
+	prefix = strings.TrimSpace(prefix)
+	if prefix == "" || prefix == "/" {
+		return in
+	}
+	if !strings.HasPrefix(prefix, "/") {
+		prefix = "/" + prefix
+	}
+	prefix = strings.TrimRight(prefix, "/")
+	if prefix == "" || prefix == "/" {
+		return in
+	}
+	p := []byte(prefix)
+
+	var (
+		out  bytes.Buffer
+		last int
+	)
+	out.Grow(len(in) + len(in)/16)
+
+	for i := 0; i < len(in); i++ {
+		if in[i] != '/' {
+			continue
+		}
+		if !isRootPathContext(in, i) {
+			continue
+		}
+		if i+1 < len(in) && in[i+1] == '/' {
+			// Protocol-relative URL ("//example.com/...").
+			continue
+		}
+		if bytes.HasPrefix(in[i:], p) {
+			continue
+		}
+		out.Write(in[last:i])
+		out.Write(p)
+		last = i
+	}
+
+	if last == 0 {
+		return in
+	}
+	out.Write(in[last:])
+	return out.Bytes()
+}
+
+func isRootPathContext(b []byte, slashIndex int) bool {
+	if slashIndex <= 0 {
+		return false
+	}
+	prev := b[slashIndex-1]
+	switch prev {
+	case '"', '\'':
+		return true
+	default:
+	}
+
+	// CSS url(/...) (without quotes).
+	k := slashIndex - 1
+	for k >= 0 && isSpace(b[k]) {
+		k--
+	}
+	if k < 0 || b[k] != '(' {
+		return false
+	}
+	k--
+	for k >= 0 && isSpace(b[k]) {
+		k--
+	}
+	if k < 2 {
+		return false
+	}
+	return lowerASCII(b[k-2]) == 'u' && lowerASCII(b[k-1]) == 'r' && lowerASCII(b[k]) == 'l'
+}
+
+func isSpace(b byte) bool {
+	switch b {
+	case ' ', '\t', '\n', '\r', '\f':
+		return true
+	default:
+		return false
+	}
+}
+
+func lowerASCII(b byte) byte {
+	if b >= 'A' && b <= 'Z' {
+		return b + ('a' - 'A')
+	}
+	return b
 }

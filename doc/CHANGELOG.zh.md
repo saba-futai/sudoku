@@ -3,6 +3,9 @@
 ## Unreleased
 - TBD
 
+## v0.2.1（2026-01-30）
+- `reverse`: 修复子路径挂载场景（如 `/gitea`）下静态资源/跳转路径丢前缀的问题：在 `strip_prefix=true` 时自动回写 `Location`、`Set-Cookie Path` 并重写 HTML/CSS/JS 中的根路径引用（如 `"/assets"`、`url(/assets)`）。
+
 ## v0.2.0（2026-01-29）
 - `config`: `config.json` 新增 `httpmask` 对象统一管理 HTTP 相关字段，并保持对旧字段的向后兼容。
 - `proxy`: 新增链式代理（多跳嵌套隧道）。

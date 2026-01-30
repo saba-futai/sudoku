@@ -32,9 +32,15 @@ func TestReverseProxy_PathPrefix(t *testing.T) {
 	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/":
-			_, _ = w.Write([]byte("root"))
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			// Simulate an app that emits root-absolute paths (common for many web UIs).
+			_, _ = w.Write([]byte(`<html><head><script src="/assets/app.js"></script></head><body><a href="/hello">hi</a></body></html>`))
 		case "/hello":
+			w.Header().Set("Content-Type", "text/plain")
 			_, _ = w.Write([]byte("ok"))
+		case "/assets/app.js":
+			w.Header().Set("Content-Type", "application/javascript")
+			_, _ = w.Write([]byte(`console.log("ok")`))
 		default:
 			http.NotFound(w, r)
 		}
@@ -111,6 +117,20 @@ func TestReverseProxy_PathPrefix(t *testing.T) {
 	startSudokuClient(t, clientCfg)
 
 	httpClient := &http.Client{Timeout: 5 * time.Second}
+
+	// HTML must be rewritten so the browser requests /gitea/assets/... instead of /assets/...
+	resp, err := httpClient.Get(fmt.Sprintf("http://%s/gitea/", reverseListen))
+	if err != nil {
+		t.Fatalf("reverse html: %v", err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reverse html status: %d", resp.StatusCode)
+	}
+	if !strings.Contains(string(body), `src="/gitea/assets/app.js"`) {
+		t.Fatalf("expected rewritten asset url, got: %q", string(body))
+	}
 
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
