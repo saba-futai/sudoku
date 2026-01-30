@@ -898,7 +898,7 @@ func TestDialPoll_CloseWrite_SendsFIN(t *testing.T) {
 	}
 }
 
-func TestDialStreamOne_UpgradeHonorsContextCancel(t *testing.T) {
+func TestDialStreamSplit_HonorsContextCancel(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		t.Fatalf("listen: %v", err)
@@ -919,19 +919,13 @@ func TestDialStreamOne_UpgradeHonorsContextCancel(t *testing.T) {
 	defer cancel()
 
 	start := time.Now()
-	_, err = dialStreamOne(ctx, ln.Addr().String(), TunnelDialOptions{
-		TLSEnabled: true,
-		Upgrade: func(raw net.Conn) (net.Conn, error) {
-			_, werr := raw.Write([]byte("x"))
-			return raw, werr
-		},
-	})
+	_, err = dialStreamSplit(ctx, ln.Addr().String(), TunnelDialOptions{TLSEnabled: false})
 	close(holdConn)
 
 	if err == nil || !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("expected context deadline exceeded, got %v", err)
 	}
 	if took := time.Since(start); took > 2*time.Second {
-		t.Fatalf("dialStreamOne took too long: %s", took)
+		t.Fatalf("dialStreamSplit took too long: %s", took)
 	}
 }

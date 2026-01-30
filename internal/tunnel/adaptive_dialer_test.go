@@ -23,9 +23,11 @@ func TestSudokuTunnel_AdaptiveDialer(t *testing.T) {
 		PaddingMax:         0,
 		ASCII:              "prefer_entropy",
 		EnablePureDownlink: true,
-		DisableHTTPMask:    false,
-		HTTPMaskMode:       "legacy",
-		HTTPMaskMultiplex:  "on",
+		HTTPMask: config.HTTPMaskConfig{
+			Disable:   false,
+			Mode:      "legacy",
+			Multiplex: "on",
+		},
 	}
 	table := sudoku.NewTable(cfg.Key, cfg.ASCII)
 
@@ -88,4 +90,3 @@ func TestSudokuTunnel_AdaptiveDialer(t *testing.T) {
 	_, _ = conn.Write([]byte(message))
 	wg.Wait()
 }
-

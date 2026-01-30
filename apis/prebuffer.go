@@ -14,4 +14,3 @@ func NewPreBufferedConn(conn net.Conn, preRead []byte) net.Conn {
 	copy(buf, preRead)
 	return &preBufferedConn{Conn: conn, buf: buf}
 }
-

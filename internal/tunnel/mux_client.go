@@ -61,3 +61,21 @@ func (c *MuxClient) Close() error {
 	c.sess.closeWithError(io.ErrClosedPipe)
 	return nil
 }
+
+// Done is closed when the underlying mux session ends.
+func (c *MuxClient) Done() <-chan struct{} {
+	if c == nil || c.sess == nil {
+		ch := make(chan struct{})
+		close(ch)
+		return ch
+	}
+	return c.sess.closed
+}
+
+// Err returns the terminal session error when Done is closed.
+func (c *MuxClient) Err() error {
+	if c == nil || c.sess == nil {
+		return io.ErrClosedPipe
+	}
+	return c.sess.closedErr()
+}

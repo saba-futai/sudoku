@@ -1,15 +1,19 @@
 # 更新日志
 
 ## Unreleased
-- `httpmask`: 新增 `path_root`（原 `http_mask_path_root`），可将 HTTP tunnel 端点统一前缀为 `/<path_root>/...`（兼容旧配置）。
-- `httpmask`: HTTP tunnel 强制启用基于 `key` 的短期 HMAC/Token 校验以减少主动探测（强制更新）。
-- `sudoku`: `prefer_ascii` 模式将唯一的非可打印字节 `0x7F` 映射为 `\\n`（强制更新）。
-- `tunnel/mux`: 服务端在 mux 模式下打印每个子连接的目标地址，并始终输出 `session end`。
-- `fallback`: 服务端配置了 `fallback_address` 且 `suspicious_action=fallback` 时，对探测/非法的 HTTP tunnel 请求不再直接回 `404`，改为走回落处理以减少特征。
-- `handshake`: 移除握手里写入的 tableid；`userHash` 从 7 字节恢复为 8 字节（API/CLI 同步）。
-- `docs`: 新增 `configs/README.md`，并随 Release 包一起分发。
+- TBD
+
+## v0.2.0（2026-01-29）
+- `config`: `config.json` 新增 `httpmask` 对象统一管理 HTTP 相关字段，并保持对旧字段的向后兼容。
+- `proxy`: 新增链式代理（多跳嵌套隧道）。
+- `reverse`: 新增反向代理（服务端按路径前缀访问客户端本地 HTTP 服务）。
+- `httpmask`: 过 CDN 默认使用 split-stream；移除 stream-one 路径。
+- `perf`: Sudoku padding 概率逻辑移除 float；新增 `make bench` 与 `make pprof-sudoku`。
+- `docker`: 新增服务端 Docker 镜像构建（Dockerfile）并在 tag 发布时推送到 GHCR。
+- `apis`: 新增链式代理配置与更严格的校验测试。
 
 ## 版本概览
+- v0.2.0：链式代理、反向代理、配置结构化（httpmask）、CDN 默认 split-stream、性能/benchmark 工具、Docker 镜像、API 对齐增强。
 - v0.0.7：移除旧的分离下行实现，新增 `enable_pure_downlink` 开关（默认纯数独下行，可关闭以启用 6bit 拆分下行并提升带宽）；API/CLI 同步支持 UoT；改进 HTTP 伪装与回落。
 - v0.0.6：初版 Sudoku 混淆 + AEAD 加密 + HTTP 伪装，支持 PAC/HTTP/SOCKS 混合代理。
 - **v0.0.5**：新增 UoT（UDP over TCP）与 SOCKS5 UDP 支持，完善极端场景测试与 PR 自动化验证。

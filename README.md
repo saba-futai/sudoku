@@ -86,11 +86,14 @@ go build -o sudoku cmd/sudoku-tunnel/main.go
     "vxpvxvvp"
   ],
   "enable_pure_downlink": true,
-  "disable_http_mask": false,
-  "http_mask_mode": "legacy",
-  "http_mask_tls": false,
-  "http_mask_multiplex": "off",
-  "http_mask_host": ""
+  "httpmask": {
+    "disable": false,
+    "mode": "legacy",
+    "tls": false,
+    "host": "",
+    "path_root": "",
+    "multiplex": "off"
+  }
 }
 ```
 Add `"custom_table": "xpxvvpvv"` (two `x`, two `p`, four `v`, 420 permutations allowed) to enforce a custom byte layout; `"ascii": "prefer_ascii"` still overrides it.
@@ -104,11 +107,49 @@ Note: `sudoku://` short links support `custom_tables` (field `ts`, with `t` as a
 Change `mode` to `client`, set `server_address` to the Server IP, set `local_port` to the proxy listening port, add `rule_urls` using the template in `configs/config.json`. Toggle `enable_pure_downlink` to `false` if you want the packed downlink mode.
 
 To run behind a CDN/proxy (e.g., Cloudflare orange-cloud), set:
-- `"disable_http_mask": false`
-- `"http_mask_mode": "auto"` (or `"stream"` / `"poll"`)
-- `"http_mask_multiplex": "auto"` (reuse underlying HTTP connections across multiple tunnel dials; HTTP/2 can multiplex multiple tunnels on one connection)
-- `"http_mask_multiplex": "on"` (single tunnel, multi-target mux inside one HTTPMask tunnel; reduces per-connection RTT further)
-- client-side `server_address` can be a domain (e.g., `"example.com:443"`); set `"http_mask_tls": true` to use HTTPS (no port-based inference).
+- `"httpmask": { "disable": false, "mode": "auto" }` (or `"stream"` / `"poll"`)
+- `"httpmask": { "multiplex": "auto" }` (reuse underlying HTTP connections across multiple tunnel dials; HTTP/2 can multiplex multiple tunnels on one connection)
+- `"httpmask": { "multiplex": "on" }` (single tunnel, multi-target mux inside one HTTPMask tunnel; reduces per-connection RTT further)
+- client-side `server_address` can be a domain (e.g., `"example.com:443"`); set `"httpmask": { "tls": true }` to use HTTPS (no port-based inference).
+
+Compatibility note: legacy top-level keys `disable_http_mask` / `http_mask_*` / `path_root` are still accepted, but the new `httpmask` object is recommended.
+
+### Chain Proxy (Multi-hop)
+Client can connect via multiple Sudoku servers (nested tunnels):
+```json
+{
+  "server_address": "entry.example.com:443",
+  "chain": { "hops": ["mid.example.com:443", "exit.example.com:443"] }
+}
+```
+
+### Reverse Proxy (Expose client HTTP services)
+Expose a client-side HTTP service (behind NAT) via a server-side HTTP entry and path prefix.
+
+Server:
+```json
+{ "reverse": { "listen": ":8081" } }
+```
+Client:
+```json
+{
+  "reverse": {
+    "client_id": "r4s",
+    "routes": [{ "path": "/gitea", "target": "127.0.0.1:3000" }]
+  }
+}
+```
+Then access: `http://<server>:8081/gitea` (default `strip_prefix=true`).
+
+### Docker (Server)
+Build locally:
+```bash
+docker build -t sudoku:local .
+```
+Run (mount your config):
+```bash
+docker run --rm -p 8080:8080 -p 8081:8081 -v "$PWD/config.json:/etc/sudoku/config.json:ro" sudoku:local
+```
 
 **Note**: The Key must be generated specifically by Sudoku.
 

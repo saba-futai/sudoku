@@ -2,6 +2,8 @@ package config
 
 import (
 	"fmt"
+	"net"
+	"path"
 	"strings"
 )
 
@@ -77,6 +79,31 @@ func (c *Config) Finalize() error {
 	c.AEAD = normalizeLower(c.AEAD)
 	c.CustomTable = strings.TrimSpace(c.CustomTable)
 
+	if c.Chain != nil {
+		if len(c.Chain.Hops) > 0 {
+			out := c.Chain.Hops[:0]
+			for _, v := range c.Chain.Hops {
+				v = strings.TrimSpace(v)
+				if v != "" {
+					out = append(out, v)
+				}
+			}
+			c.Chain.Hops = out
+		}
+		if len(c.Chain.Hops) == 0 {
+			c.Chain = nil
+		}
+	}
+
+	// Allow chain-only client configs where the first hop is provided in chain.hops and server_address is empty.
+	if c.Mode == "client" && c.ServerAddress == "" && c.Chain != nil && len(c.Chain.Hops) > 0 {
+		c.ServerAddress = c.Chain.Hops[0]
+		c.Chain.Hops = c.Chain.Hops[1:]
+		if len(c.Chain.Hops) == 0 {
+			c.Chain = nil
+		}
+	}
+
 	if len(c.CustomTables) > 0 {
 		out := c.CustomTables[:0]
 		for _, v := range c.CustomTables {
@@ -111,11 +138,58 @@ func (c *Config) Finalize() error {
 		c.ASCII = normalizeLower(c.ASCII)
 	}
 
-	c.HTTPMaskMode = normalizeHTTPMaskMode(c.HTTPMaskMode)
-	c.HTTPMaskMultiplex = normalizeHTTPMaskMultiplex(c.DisableHTTPMask, c.HTTPMaskMultiplex)
+	c.HTTPMask.Mode = normalizeHTTPMaskMode(c.HTTPMask.Mode)
+	c.HTTPMask.Multiplex = normalizeHTTPMaskMultiplex(c.HTTPMask.Disable, c.HTTPMask.Multiplex)
 	c.SuspiciousAction = normalizeSuspiciousAction(c.SuspiciousAction)
-	c.HTTPMaskHost = strings.TrimSpace(c.HTTPMaskHost)
-	c.HTTPMaskPathRoot = strings.TrimSpace(c.HTTPMaskPathRoot)
+	c.HTTPMask.Host = strings.TrimSpace(c.HTTPMask.Host)
+	c.HTTPMask.PathRoot = strings.TrimSpace(c.HTTPMask.PathRoot)
+
+	if c.Reverse != nil {
+		c.Reverse.Listen = strings.TrimSpace(c.Reverse.Listen)
+		c.Reverse.ClientID = strings.TrimSpace(c.Reverse.ClientID)
+
+		if len(c.Reverse.Routes) > 0 {
+			seen := make(map[string]struct{}, len(c.Reverse.Routes))
+			out := c.Reverse.Routes[:0]
+			for _, r := range c.Reverse.Routes {
+				r.Path = strings.TrimSpace(r.Path)
+				r.Target = strings.TrimSpace(r.Target)
+				r.HostHeader = strings.TrimSpace(r.HostHeader)
+
+				if r.Path == "" && r.Target == "" {
+					continue
+				}
+				if r.Path == "" {
+					return fmt.Errorf("reverse route: missing path")
+				}
+				if !strings.HasPrefix(r.Path, "/") {
+					r.Path = "/" + r.Path
+				}
+				r.Path = path.Clean(r.Path)
+				if r.Path != "/" {
+					r.Path = strings.TrimRight(r.Path, "/")
+				}
+
+				if r.Target == "" {
+					return fmt.Errorf("reverse route %q: missing target", r.Path)
+				}
+				if _, _, err := net.SplitHostPort(r.Target); err != nil {
+					return fmt.Errorf("reverse route %q: invalid target %q: %w", r.Path, r.Target, err)
+				}
+
+				if _, ok := seen[r.Path]; ok {
+					return fmt.Errorf("reverse route duplicate path: %q", r.Path)
+				}
+				seen[r.Path] = struct{}{}
+				out = append(out, r)
+			}
+			c.Reverse.Routes = out
+		}
+
+		if c.Reverse.Listen == "" && c.Reverse.ClientID == "" && len(c.Reverse.Routes) == 0 {
+			c.Reverse = nil
+		}
+	}
 
 	// Proxy mode:
 	// - rule_urls: ["global"] / ["direct"] acts as a keyword override and clears RuleURLs.
@@ -144,10 +218,10 @@ func (c *Config) Finalize() error {
 }
 
 func (c *Config) HTTPMaskTunnelEnabled() bool {
-	if c == nil || c.DisableHTTPMask {
+	if c == nil || c.HTTPMask.Disable {
 		return false
 	}
-	switch c.HTTPMaskMode {
+	switch c.HTTPMask.Mode {
 	case "stream", "poll", "auto":
 		return true
 	default:
@@ -156,5 +230,5 @@ func (c *Config) HTTPMaskTunnelEnabled() bool {
 }
 
 func (c *Config) HTTPMaskSessionMuxEnabled() bool {
-	return c.HTTPMaskTunnelEnabled() && c.HTTPMaskMultiplex == "on"
+	return c.HTTPMaskTunnelEnabled() && c.HTTPMask.Multiplex == "on"
 }

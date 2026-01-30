@@ -7,7 +7,7 @@ MAIN_PATH=./cmd/sudoku-tunnel
 # -w: Omit the DWARF symbol table
 LDFLAGS=-ldflags "-s -w"
 
-.PHONY: all build clean test build-all help
+.PHONY: all build clean test bench pprof-sudoku build-all help
 
 default: build
 
@@ -22,6 +22,18 @@ build:
 test:
 	@echo "Running tests..."
 	go test -v ./...
+
+# Run benchmarks (no tests)
+bench:
+	@echo "Running benchmarks..."
+	go test -run '^$$' -bench . -benchmem ./...
+
+# Generate pprof profiles for the Sudoku obfs layer
+pprof-sudoku:
+	@echo "Generating pprof profiles for ./pkg/obfs/sudoku..."
+	@rm -f cpu.out mem.out
+	go test -run '^$$' -bench BenchmarkSudoku -benchmem -cpuprofile cpu.out -memprofile mem.out ./pkg/obfs/sudoku
+	@echo "Profiles written: cpu.out, mem.out"
 
 # Clean build artifacts
 clean:
@@ -50,5 +62,7 @@ help:
 	@echo "Targets:"
 	@echo "  build       Build for current OS (default)"
 	@echo "  test        Run unit tests"
+	@echo "  bench       Run benchmarks (benchmem)"
+	@echo "  pprof-sudoku Generate cpu/mem profiles for Sudoku bench"
 	@echo "  clean       Remove bin directory"
 	@echo "  build-all   Cross-compile for Linux, Windows, and Darwin (AMD64/ARM64)"

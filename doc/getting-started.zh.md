@@ -10,7 +10,7 @@
 ## 1. 准备工作
 - 一台可被客户端访问到的服务器（有公网 IP / 域名，或在同一网络环境可直连）。
 - 电脑：Linux / macOS / Windows 均可。
-- 依赖：已下载发布版二进制，或安装 Go 1.22+ 准备自行编译。
+- 依赖：已下载发布版二进制，或安装 `go.mod` 要求的 Go toolchain 准备自行编译。
 - 端口：服务端需要一个外网可访问的 TCP 端口（示例用 8080），客户端本地代理端口默认 1080；同时确认服务器防火墙/安全组已放行该端口。
 
 ## 2. 获取程序
@@ -64,7 +64,14 @@ go build -o sudoku ./cmd/sudoku-tunnel
   "padding_max": 15,
   "custom_table": "xpxvvpvv",
   "ascii": "prefer_entropy",
-  "disable_http_mask": false,
+  "httpmask": {
+    "disable": false,
+    "mode": "legacy",
+    "tls": false,
+    "host": "",
+    "path_root": "",
+    "multiplex": "off"
+  },
   "rule_urls": ["global"]
 }
 ```
@@ -76,9 +83,9 @@ go build -o sudoku ./cmd/sudoku-tunnel
 ## 5.1（可选）过 Cloudflare CDN（小黄云）
 如需走 Cloudflare CDN/反代，请使用真实 HTTP 隧道模式（`stream` / `poll` / `auto`），不要用 `legacy`。
 
-- 服务端：`"disable_http_mask": false`，并将 `"http_mask_mode"` 设为 `"poll"`（或 `"auto"`）。
+- 服务端：设置 `"httpmask": { "disable": false, "mode": "poll" }`（或 `"auto"`）。
 - 客户端：同样开启 HTTP mask，并把 `"server_address"` 填成 Cloudflare 域名（例如 `"your.domain.com:443"`；也可用 Cloudflare 支持的 `8080`/`8443` 等端口）。
-- 如需走 HTTPS，请显式设置 `"http_mask_tls": true`（不再按端口自动推断）。
+- 如需走 HTTPS，请显式设置 `"httpmask": { "tls": true }`（不再按端口自动推断）。
 
 ## 6. 启动
 ```bash

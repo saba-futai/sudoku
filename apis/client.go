@@ -87,6 +87,32 @@ func wrapClientConn(rawConn net.Conn, cfg *ProtocolConfig, table *sudoku.Table, 
 	return cConn, nil
 }
 
+func upgradeClientConn(rawConn net.Conn, cfg *ProtocolConfig, table *sudoku.Table, seed string, postHandshake func(net.Conn) error) (net.Conn, error) {
+	cConn, err := wrapClientConn(rawConn, cfg, table, seed)
+	if err != nil {
+		return nil, err
+	}
+
+	handshake := buildHandshakePayload(cfg.Key)
+	if _, err := cConn.Write(handshake[:]); err != nil {
+		_ = cConn.Close()
+		return nil, fmt.Errorf("send handshake failed: %w", err)
+	}
+	if _, err := cConn.Write([]byte{downlinkMode(cfg)}); err != nil {
+		_ = cConn.Close()
+		return nil, fmt.Errorf("send downlink mode failed: %w", err)
+	}
+
+	if postHandshake != nil {
+		if err := postHandshake(cConn); err != nil {
+			_ = cConn.Close()
+			return nil, err
+		}
+	}
+
+	return cConn, nil
+}
+
 // Dial opens a Sudoku tunnel to cfg.ServerAddress and requests cfg.TargetAddress.
 func Dial(ctx context.Context, cfg *ProtocolConfig) (net.Conn, error) {
 	baseConn, err := establishBaseConn(ctx, cfg, func(c *ProtocolConfig) error { return c.ValidateClient() }, func(conn net.Conn) error {
@@ -102,6 +128,13 @@ func Dial(ctx context.Context, cfg *ProtocolConfig) (net.Conn, error) {
 	return baseConn, nil
 }
 
+// DialBase opens a Sudoku tunnel to cfg.ServerAddress and completes the handshake, but does not send a target address.
+//
+// This is useful for higher-level protocols built on top of the tunnel (e.g. mux sessions, reverse proxy sessions).
+func DialBase(ctx context.Context, cfg *ProtocolConfig) (net.Conn, error) {
+	return establishBaseConn(ctx, cfg, validateBaseClientConfig, nil)
+}
+
 func establishBaseConn(ctx context.Context, cfg *ProtocolConfig, validate func(*ProtocolConfig) error, postHandshake func(net.Conn) error) (net.Conn, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("config is required")
@@ -112,6 +145,7 @@ func establishBaseConn(ctx context.Context, cfg *ProtocolConfig, validate func(*
 	seed := canonicalCryptoSeedKey(cfg.Key)
 
 	// CDN-capable HTTP tunnel modes.
+	var baseConn net.Conn
 	if !cfg.DisableHTTPMask {
 		switch strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMode)) {
 		case "stream", "poll", "auto":
@@ -127,39 +161,33 @@ func establishBaseConn(ctx context.Context, cfg *ProtocolConfig, validate func(*
 				PathRoot:     cfg.HTTPMaskPathRoot,
 				AuthKey:      seed,
 				Upgrade: func(rawConn net.Conn) (net.Conn, error) {
-					cConn, err := wrapClientConn(rawConn, cfg, table, seed)
-					if err != nil {
-						return nil, err
-					}
-
-					handshake := buildHandshakePayload(cfg.Key)
-					if _, err := cConn.Write(handshake[:]); err != nil {
-						_ = cConn.Close()
-						return nil, fmt.Errorf("send handshake failed: %w", err)
-					}
-
-					if _, err := cConn.Write([]byte{downlinkMode(cfg)}); err != nil {
-						_ = cConn.Close()
-						return nil, fmt.Errorf("send downlink mode failed: %w", err)
-					}
-
-					if postHandshake != nil {
-						if err := postHandshake(cConn); err != nil {
-							_ = cConn.Close()
-							return nil, err
-						}
-					}
-
-					return cConn, nil
+					return upgradeClientConn(rawConn, cfg, table, seed, nil)
 				},
 				Multiplex: cfg.HTTPMaskMultiplex,
 			})
 			if err != nil {
 				return nil, fmt.Errorf("dial http tunnel failed: %w", err)
 			}
-
-			return conn, nil
+			baseConn = conn
 		}
+	}
+	if baseConn != nil {
+		if len(cfg.ChainHops) > 0 {
+			chained, err := chainUpgradeConn(baseConn, cfg, seed)
+			if err != nil {
+				_ = baseConn.Close()
+				return nil, err
+			}
+			baseConn = chained
+		}
+
+		if postHandshake != nil {
+			if err := postHandshake(baseConn); err != nil {
+				_ = baseConn.Close()
+				return nil, err
+			}
+		}
+		return baseConn, nil
 	}
 
 	resolvedAddr, err := dnsutil.ResolveWithCache(ctx, cfg.ServerAddress)
@@ -191,20 +219,18 @@ func establishBaseConn(ctx context.Context, cfg *ProtocolConfig, validate func(*
 		return nil, err
 	}
 
-	cConn, err := wrapClientConn(rawConn, cfg, table, seed)
+	cConn, err := upgradeClientConn(rawConn, cfg, table, seed, nil)
 	if err != nil {
 		return nil, err
 	}
 
-	handshake := buildHandshakePayload(cfg.Key)
-	if _, err := cConn.Write(handshake[:]); err != nil {
-		cConn.Close()
-		return nil, fmt.Errorf("send handshake failed: %w", err)
-	}
-
-	if _, err := cConn.Write([]byte{downlinkMode(cfg)}); err != nil {
-		cConn.Close()
-		return nil, fmt.Errorf("send downlink mode failed: %w", err)
+	if len(cfg.ChainHops) > 0 {
+		chained, err := chainUpgradeConn(cConn, cfg, seed)
+		if err != nil {
+			_ = cConn.Close()
+			return nil, err
+		}
+		cConn = chained
 	}
 
 	if postHandshake != nil {
@@ -218,7 +244,7 @@ func establishBaseConn(ctx context.Context, cfg *ProtocolConfig, validate func(*
 	return cConn, nil
 }
 
-func validateUoTConfig(cfg *ProtocolConfig) error {
+func validateBaseClientConfig(cfg *ProtocolConfig) error {
 	if cfg == nil {
 		return fmt.Errorf("config is required")
 	}
@@ -226,4 +252,35 @@ func validateUoTConfig(cfg *ProtocolConfig) error {
 		return fmt.Errorf("ServerAddress cannot be empty")
 	}
 	return cfg.Validate()
+}
+
+func chainUpgradeConn(conn net.Conn, cfg *ProtocolConfig, seed string) (net.Conn, error) {
+	cur := conn
+	for _, hopAddr := range cfg.ChainHops {
+		hopAddr = strings.TrimSpace(hopAddr)
+		if hopAddr == "" {
+			return nil, fmt.Errorf("empty chain hop")
+		}
+
+		if err := protocol.WriteAddress(cur, hopAddr); err != nil {
+			return nil, fmt.Errorf("chain write hop address failed: %w", err)
+		}
+		if !cfg.DisableHTTPMask {
+			if err := httpmask.WriteRandomRequestHeaderWithPathRoot(cur, hopAddr, cfg.HTTPMaskPathRoot); err != nil {
+				return nil, fmt.Errorf("chain write http mask failed: %w", err)
+			}
+		}
+
+		table, err := pickClientTable(cfg)
+		if err != nil {
+			return nil, err
+		}
+
+		next, err := upgradeClientConn(cur, cfg, table, seed, nil)
+		if err != nil {
+			return nil, err
+		}
+		cur = next
+	}
+	return cur, nil
 }

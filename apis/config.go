@@ -21,6 +21,7 @@ package apis
 
 import (
 	"fmt"
+	"net"
 	"strings"
 
 	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
@@ -40,6 +41,15 @@ type ProtocolConfig struct {
 	// 格式: "host:port" 或 "ip:port"
 	// 例如: "example.com:443" 或 "1.2.3.4:8080"
 	ServerAddress string
+
+	// ChainHops enables multi-hop (chained) Sudoku proxying.
+	//
+	// When set (len>0), the client first connects to ServerAddress, then asks that server to connect to each hop
+	// in order, performing a full Sudoku handshake on every hop (nested tunnels). The final hop receives the
+	// TargetAddress.
+	//
+	// All hops share the same Key/AEAD/Table settings in this ProtocolConfig.
+	ChainHops []string
 
 	// ============ 加密与混淆 ============
 
@@ -106,7 +116,7 @@ type ProtocolConfig struct {
 
 	// HTTPMaskMode controls how the "HTTP mask" behaves:
 	//   - "legacy": write a fake HTTP/1.1 header then switch to raw stream (default, not CDN-compatible)
-	//   - "stream": real HTTP tunnel (stream-one), CDN-compatible
+	//   - "stream": real HTTP tunnel (split-stream), CDN-compatible
 	//   - "poll": plain HTTP tunnel (authorize/push/pull), strong restricted-network pass-through
 	//   - "auto": try stream then fall back to poll
 	HTTPMaskMode string
@@ -200,6 +210,16 @@ func (c *ProtocolConfig) Validate() error {
 			default:
 				return fmt.Errorf("invalid HTTPMaskPathRoot: contains invalid character %q", c)
 			}
+		}
+	}
+
+	for i, hop := range c.ChainHops {
+		hop = strings.TrimSpace(hop)
+		if hop == "" {
+			return fmt.Errorf("ChainHops[%d] cannot be empty", i)
+		}
+		if _, _, err := net.SplitHostPort(hop); err != nil {
+			return fmt.Errorf("ChainHops[%d] invalid address %q: %w", i, hop, err)
 		}
 	}
 

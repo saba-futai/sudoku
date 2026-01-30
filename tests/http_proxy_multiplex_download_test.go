@@ -98,9 +98,11 @@ func TestHTTPProxy_Multiplex_LargeDownloads(t *testing.T) {
 		PaddingMax:         0,
 		ASCII:              "prefer_ascii",
 		EnablePureDownlink: true,
-		DisableHTTPMask:    false,
-		HTTPMaskMode:       "auto",
-		HTTPMaskTLS:        false,
+		HTTPMask: config.HTTPMaskConfig{
+			Disable: false,
+			Mode:    "auto",
+			TLS:     false,
+		},
 	}
 	startSudokuServer(t, serverCfg)
 
@@ -116,10 +118,12 @@ func TestHTTPProxy_Multiplex_LargeDownloads(t *testing.T) {
 		ASCII:              "prefer_ascii",
 		EnablePureDownlink: true,
 		ProxyMode:          "global",
-		DisableHTTPMask:    false,
-		HTTPMaskMode:       "stream",
-		HTTPMaskTLS:        false,
-		HTTPMaskMultiplex:  "on",
+		HTTPMask: config.HTTPMaskConfig{
+			Disable:   false,
+			Mode:      "stream",
+			TLS:       false,
+			Multiplex: "on",
+		},
 	}
 	startSudokuClient(t, clientCfg)
 

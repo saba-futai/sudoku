@@ -88,10 +88,10 @@ Routing modes (client):
 ## Cloudflare CDN (Orange Cloud)
 Sudoku can run through a CDN/proxy only in real HTTP tunnel modes: `stream` / `poll` / `auto`. `legacy` mode is not CDN-compatible.
 
-- Server: set `"disable_http_mask": false` and `"http_mask_mode": "poll"` (or `"auto"`).
+- Server: set `"httpmask": { "disable": false, "mode": "poll" }` (or `"auto"`).
 - Client: same, and set `"server_address": "your.domain.com:443"` (or other Cloudflare-supported HTTP(S) ports like `8080`/`8443`).
-- Recommended: set `"http_mask_multiplex": "auto"` to reuse one tunnel connection for multiple target streams (lower RTT for subsequent connections).
-- Set `"http_mask_tls": true` to use HTTPS to the CDN edge (no port-based inference).
+- Recommended: set `"httpmask": { "multiplex": "auto" }` to reuse one tunnel connection for multiple target streams (lower RTT for subsequent connections).
+- Set `"httpmask": { "tls": true }` to use HTTPS to the CDN edge (no port-based inference).
 
 Notes:
 - Cloudflare SSL mode `Flexible` is the simplest (Cloudflare → origin uses HTTP). For end-to-end TLS to your origin, use `Full (strict)` + a TLS terminator/reverse-proxy in front of Sudoku.
@@ -226,10 +226,10 @@ WantedBy=multi-user.target
 ## 过 Cloudflare CDN（小黄云）
 Sudoku 只有在真实 HTTP 隧道模式下才能过 CDN/代理：`stream` / `poll` / `auto`；`legacy` 模式不兼容 CDN。
 
-- 服务端：`"disable_http_mask": false`，并将 `"http_mask_mode"` 设为 `"poll"`（或 `"auto"`）。
+- 服务端：设置 `"httpmask": { "disable": false, "mode": "poll" }`（或 `"auto"`）。
 - 客户端：同样开启 HTTP mask，并将 `"server_address"` 填成 Cloudflare 域名（如 `"your.domain.com:443"`；也可用 Cloudflare 支持的 `8080`/`8443` 等端口）。
-- 建议同时开启 `"http_mask_multiplex": "auto"`（复用单条隧道连接承载多条目标流，降低后续连接 RTT）。
-- 如需使用 HTTPS，请显式设置 `"http_mask_tls": true`（不再按端口自动推断）。
+- 建议同时开启 `"httpmask": { "multiplex": "auto" }`（复用单条隧道连接承载多条目标流，降低后续连接 RTT）。
+- 如需使用 HTTPS，请显式设置 `"httpmask": { "tls": true }`（不再按端口自动推断）。
 
 提示：
 - Cloudflare 的 SSL 模式选 `Flexible` 最省事（Cloudflare → 源站走 HTTP）。如需源站也走 TLS，请用 `Full (strict)` 并在 Sudoku 前面加一层 TLS 终止/反代。

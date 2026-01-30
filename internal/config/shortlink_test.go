@@ -65,10 +65,12 @@ func TestShortLinkRoundTrip_CustomTablesAndCDN(t *testing.T) {
 		ASCII:              "prefer_entropy",
 		CustomTables:       []string{"xpxvvpvv", "vxpvxvvp"},
 		EnablePureDownlink: true,
-		DisableHTTPMask:    false,
-		HTTPMaskMode:       "auto",
-		HTTPMaskTLS:        true,
-		HTTPMaskMultiplex:  "auto",
+		HTTPMask: HTTPMaskConfig{
+			Disable:   false,
+			Mode:      "auto",
+			TLS:       true,
+			Multiplex: "auto",
+		},
 	}
 
 	link, err := BuildShortLinkFromConfig(cfg, "")
@@ -95,17 +97,17 @@ func TestShortLinkRoundTrip_CustomTablesAndCDN(t *testing.T) {
 	if decoded.CustomTable != cfg.CustomTables[0] {
 		t.Fatalf("custom table fallback mismatch, got %s", decoded.CustomTable)
 	}
-	if decoded.HTTPMaskMode != "auto" {
-		t.Fatalf("http mask mode mismatch, got %s", decoded.HTTPMaskMode)
+	if decoded.HTTPMask.Mode != "auto" {
+		t.Fatalf("http mask mode mismatch, got %s", decoded.HTTPMask.Mode)
 	}
-	if !decoded.HTTPMaskTLS {
-		t.Fatalf("http mask tls mismatch, got %v", decoded.HTTPMaskTLS)
+	if !decoded.HTTPMask.TLS {
+		t.Fatalf("http mask tls mismatch, got %v", decoded.HTTPMask.TLS)
 	}
-	if decoded.HTTPMaskMultiplex != "auto" {
-		t.Fatalf("http mask multiplex mismatch, got %s", decoded.HTTPMaskMultiplex)
+	if decoded.HTTPMask.Multiplex != "auto" {
+		t.Fatalf("http mask multiplex mismatch, got %s", decoded.HTTPMask.Multiplex)
 	}
-	if decoded.DisableHTTPMask {
-		t.Fatalf("disable http mask mismatch, got %v", decoded.DisableHTTPMask)
+	if decoded.HTTPMask.Disable {
+		t.Fatalf("disable http mask mismatch, got %v", decoded.HTTPMask.Disable)
 	}
 }
 
@@ -158,8 +160,10 @@ func TestShortLinkAdvertiseHostWithPort(t *testing.T) {
 		LocalPort:          8080,
 		Key:                "deadbeef",
 		EnablePureDownlink: true,
-		DisableHTTPMask:    false,
-		HTTPMaskMode:       "auto",
+		HTTPMask: HTTPMaskConfig{
+			Disable: false,
+			Mode:    "auto",
+		},
 	}
 
 	link, err := BuildShortLinkFromConfig(cfg, "cc.futai.io:443")
@@ -174,8 +178,8 @@ func TestShortLinkAdvertiseHostWithPort(t *testing.T) {
 	if decoded.ServerAddress != "cc.futai.io:443" {
 		t.Fatalf("server address mismatch, got %s", decoded.ServerAddress)
 	}
-	if decoded.HTTPMaskMode != "auto" {
-		t.Fatalf("http mask mode mismatch, got %s", decoded.HTTPMaskMode)
+	if decoded.HTTPMask.Mode != "auto" {
+		t.Fatalf("http mask mode mismatch, got %s", decoded.HTTPMask.Mode)
 	}
 }
 
@@ -186,8 +190,10 @@ func TestShortLinkServerDeriveHostFromFallback(t *testing.T) {
 		Key:                "deadbeef",
 		EnablePureDownlink: true,
 		FallbackAddr:       "8.219.204.112:11415",
-		DisableHTTPMask:    false,
-		HTTPMaskMode:       "poll",
+		HTTPMask: HTTPMaskConfig{
+			Disable: false,
+			Mode:    "poll",
+		},
 	}
 
 	link, err := BuildShortLinkFromConfig(cfg, "")
@@ -203,8 +209,8 @@ func TestShortLinkServerDeriveHostFromFallback(t *testing.T) {
 	if decoded.ServerAddress != "8.219.204.112:10059" {
 		t.Fatalf("server address mismatch, got %s", decoded.ServerAddress)
 	}
-	if decoded.HTTPMaskMode != "poll" {
-		t.Fatalf("http mask mode mismatch, got %s", decoded.HTTPMaskMode)
+	if decoded.HTTPMask.Mode != "poll" {
+		t.Fatalf("http mask mode mismatch, got %s", decoded.HTTPMask.Mode)
 	}
 }
 

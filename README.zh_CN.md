@@ -88,11 +88,14 @@ go build -o sudoku cmd/sudoku-tunnel/main.go
     "vxpvxvvp"
   ],
   "enable_pure_downlink": true,
-  "disable_http_mask": false,
-  "http_mask_mode": "legacy",
-  "http_mask_tls": false,
-  "http_mask_multiplex": "off",
-  "http_mask_host": ""
+  "httpmask": {
+    "disable": false,
+    "mode": "legacy",
+    "tls": false,
+    "host": "",
+    "path_root": "",
+    "multiplex": "off"
+  }
 }
 ```
 
@@ -107,11 +110,49 @@ go build -o sudoku cmd/sudoku-tunnel/main.go
 将 `mode` 改为 `client`，并设置 `server_address` 为服务端 IP，将`local_port` 设置为代理监听端口，添加 `rule_urls` 使用`configs/config.json`的模板填充；如需带宽优化下行，将 `enable_pure_downlink` 置为 `false`。
 
 如需走 CDN/代理（例如 Cloudflare 小黄云），设置：
-- `"disable_http_mask": false`
-- `"http_mask_mode": "auto"`（或 `"stream"` / `"poll"`）
-- `"http_mask_multiplex": "auto"`（复用底层 HTTP 连接：keep-alive / HTTP/2 多路复用；多条隧道可共享同一条连接）
-- `"http_mask_multiplex": "on"`（单 tunnel 多目标：在同一条 HTTPMask 隧道内复用多条目标连接，进一步减少后续连接 RTT）
-- 客户端 `server_address` 可填写域名（如 `"example.com:443"`）；如需使用 HTTPS，请显式设置 `"http_mask_tls": true`（不再按端口自动推断）。
+- `"httpmask": { "disable": false, "mode": "auto" }`（或 `"stream"` / `"poll"`）
+- `"httpmask": { "multiplex": "auto" }`（复用底层 HTTP 连接：keep-alive / HTTP/2 多路复用；多条隧道可共享同一条连接）
+- `"httpmask": { "multiplex": "on" }`（单 tunnel 多目标：在同一条 HTTPMask 隧道内复用多条目标连接，进一步减少后续连接 RTT）
+- 客户端 `server_address` 可填写域名（如 `"example.com:443"`）；如需使用 HTTPS，请显式设置 `"httpmask": { "tls": true }`（不再按端口自动推断）。
+
+兼容性说明：仍兼容旧版顶层字段 `disable_http_mask` / `http_mask_*` / `path_root`，但建议迁移到新的 `httpmask` 对象。
+
+### 链式代理（多跳）
+客户端可通过多个 Sudoku 服务端级联转发（嵌套隧道）：
+```json
+{
+  "server_address": "entry.example.com:443",
+  "chain": { "hops": ["mid.example.com:443", "exit.example.com:443"] }
+}
+```
+
+### 反向代理（将客户端 HTTP 服务暴露到服务端）
+让 NAT 后的客户端把本地 HTTP 服务通过隧道暴露给服务端，再由服务端通过不同路径前缀访问。
+
+服务端：
+```json
+{ "reverse": { "listen": ":8081" } }
+```
+客户端：
+```json
+{
+  "reverse": {
+    "client_id": "r4s",
+    "routes": [{ "path": "/gitea", "target": "127.0.0.1:3000" }]
+  }
+}
+```
+随后访问：`http://<server>:8081/gitea`（默认 `strip_prefix=true`）。
+
+### Docker（服务端）
+本地构建：
+```bash
+docker build -t sudoku:local .
+```
+运行（挂载你的配置）：
+```bash
+docker run --rm -p 8080:8080 -p 8081:8081 -v "$PWD/config.json:/etc/sudoku/config.json:ro" sudoku:local
+```
 
 **注意**：Key一定要用sudoku专门生成
 

@@ -3,6 +3,14 @@
   "transport": "tcp",
   "local_port": 1080,
   "server_address": "0.0.0.0:8080",
+  "chain": {
+    "hops": []
+  },
+  "reverse": {
+    "listen": "",
+    "client_id": "",
+    "routes": []
+  },
   "fallback_address": "127.0.0.1:80",
   "key": "用./sudoku -keygen 生成，具体见README的运行部分",
   "aead": "chacha20-poly1305 / aes-128-gcm / none",
@@ -16,15 +24,16 @@
   ],
   "ascii": "prefer_entropy",
   "enable_pure_downlink": false,
-  "disable_http_mask": false,
-  "http_mask_mode": "legacy / auto / stream / poll",
-  "http_mask_tls": true,
-  "http_mask_host": "",
-  "path_root": "",
-  "http_mask_multiplex": "off / auto / on",
+  "httpmask": {
+    "disable": false,
+    "mode": "legacy / auto / stream / poll",
+    "tls": true,
+    "host": "",
+    "path_root": "",
+    "multiplex": "off / auto / on"
+  },
   "rule_urls": [
     "https://gh-proxy.org/https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/China/China.list",
-    "https://gh-proxy.org/https://raw.githubusercontent.com/fernvenue/chn-cidr-list/master/ipv4.yaml",
-    "global","direct"
+    "https://gh-proxy.org/https://raw.githubusercontent.com/fernvenue/chn-cidr-list/master/ipv4.yaml"
   ]
 }

@@ -80,17 +80,17 @@ func (d *MuxDialer) getOrCreateSession() (*muxSession, error) {
 		d.creating = false
 		d.cond.Broadcast()
 		d.mu.Unlock()
-		if d.Config.DisableHTTPMask {
-			return nil, fmt.Errorf("mux requires http mask to be enabled")
+		if d.Config.HTTPMask.Disable {
+			return nil, fmt.Errorf("mux requires httpmask.disable=false")
 		}
-		return nil, fmt.Errorf("mux requires http_mask_mode=stream/poll/auto (got %q)", d.Config.HTTPMaskMode)
+		return nil, fmt.Errorf("mux requires httpmask.mode=stream/poll/auto (got %q)", d.Config.HTTPMask.Mode)
 	}
-	if d.Config.HTTPMaskMultiplex != "on" {
+	if d.Config.HTTPMask.Multiplex != "on" {
 		d.mu.Lock()
 		d.creating = false
 		d.cond.Broadcast()
 		d.mu.Unlock()
-		return nil, fmt.Errorf("mux requires http_mask_multiplex=on (got %q)", d.Config.HTTPMaskMultiplex)
+		return nil, fmt.Errorf("mux requires httpmask.multiplex=on (got %q)", d.Config.HTTPMask.Multiplex)
 	}
 
 	baseConn, err := d.dialBase()

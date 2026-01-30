@@ -360,7 +360,7 @@ func HandshakeAndUpgradeWithTablesMeta(rawConn net.Conn, cfg *config.Config, tab
 	shouldConsumeMask := false
 	var httpHeaderData []byte
 
-	if !cfg.DisableHTTPMask {
+	if !cfg.HTTPMask.Disable {
 		peekBytes, _ := bufReader.Peek(4) // Ignore error; if peek fails, let subsequent read handle it.
 		if httpmask.LooksLikeHTTPRequestStart(peekBytes) {
 			shouldConsumeMask = true

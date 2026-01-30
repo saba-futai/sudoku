@@ -196,12 +196,14 @@ func finalizeWizard(in wizardInput) (*WizardResult, error) {
 		ASCII:              asciiMode,
 		CustomTable:        strings.TrimSpace(in.CustomTable),
 		EnablePureDownlink: enablePureDownlink,
-		DisableHTTPMask:    in.DisableHTTPMask,
-		HTTPMaskMode:       httpMaskMode,
-		HTTPMaskTLS:        in.HTTPMaskTLS,
-		HTTPMaskHost:       strings.TrimSpace(in.HTTPMaskHost),
-		HTTPMaskPathRoot:   strings.TrimSpace(in.HTTPMaskPathRoot),
-		HTTPMaskMultiplex:  httpMaskMux,
+		HTTPMask: config.HTTPMaskConfig{
+			Disable:   in.DisableHTTPMask,
+			Mode:      httpMaskMode,
+			TLS:       in.HTTPMaskTLS,
+			Host:      strings.TrimSpace(in.HTTPMaskHost),
+			PathRoot:  strings.TrimSpace(in.HTTPMaskPathRoot),
+			Multiplex: httpMaskMux,
+		},
 	}
 
 	clientCfg := &config.Config{
@@ -218,12 +220,14 @@ func finalizeWizard(in wizardInput) (*WizardResult, error) {
 		ProxyMode:          "pac",
 		RuleURLs:           nil,
 		EnablePureDownlink: enablePureDownlink,
-		DisableHTTPMask:    in.DisableHTTPMask,
-		HTTPMaskMode:       httpMaskMode,
-		HTTPMaskTLS:        in.HTTPMaskTLS,
-		HTTPMaskHost:       strings.TrimSpace(in.HTTPMaskHost),
-		HTTPMaskPathRoot:   strings.TrimSpace(in.HTTPMaskPathRoot),
-		HTTPMaskMultiplex:  httpMaskMux,
+		HTTPMask: config.HTTPMaskConfig{
+			Disable:   in.DisableHTTPMask,
+			Mode:      httpMaskMode,
+			TLS:       in.HTTPMaskTLS,
+			Host:      strings.TrimSpace(in.HTTPMaskHost),
+			PathRoot:  strings.TrimSpace(in.HTTPMaskPathRoot),
+			Multiplex: httpMaskMux,
+		},
 	}
 	if err := serverCfg.Finalize(); err != nil {
 		return nil, fmt.Errorf("finalize server config: %w", err)

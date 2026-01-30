@@ -68,11 +68,12 @@ func TestLoadPathRootCompat(t *testing.T) {
 
 	cases := []struct {
 		name        string
-		configKey   string
+		extraJSON   string
 		expectValue string
 	}{
-		{name: "new", configKey: "path_root", expectValue: "aabbcc"},
-		{name: "legacy", configKey: "http_mask_path_root", expectValue: "aabbcc"},
+		{name: "new-httpmask-object", extraJSON: `"httpmask": {"path_root": "aabbcc"}`, expectValue: "aabbcc"},
+		{name: "legacy-path_root", extraJSON: `"path_root": "aabbcc"`, expectValue: "aabbcc"},
+		{name: "legacy-http_mask_path_root", extraJSON: `"http_mask_path_root": "aabbcc"`, expectValue: "aabbcc"},
 	}
 
 	for _, tc := range cases {
@@ -86,9 +87,9 @@ func TestLoadPathRootCompat(t *testing.T) {
 				"server_address": "1.1.1.1:443",
 				"key": "k",
 				"aead": "none",
-				"%s": "%s",
+				%s,
 				"rule_urls": ["global"]
-			}`, tc.configKey, tc.expectValue)
+			}`, tc.extraJSON)
 
 			if err := os.WriteFile(path, []byte(data), 0o644); err != nil {
 				t.Fatalf("write file: %v", err)
@@ -98,8 +99,8 @@ func TestLoadPathRootCompat(t *testing.T) {
 			if err != nil {
 				t.Fatalf("Load error: %v", err)
 			}
-			if cfg.HTTPMaskPathRoot != tc.expectValue {
-				t.Fatalf("HTTPMaskPathRoot mismatch: got %q want %q", cfg.HTTPMaskPathRoot, tc.expectValue)
+			if cfg.HTTPMask.PathRoot != tc.expectValue {
+				t.Fatalf("HTTPMask.PathRoot mismatch: got %q want %q", cfg.HTTPMask.PathRoot, tc.expectValue)
 			}
 		})
 	}

@@ -69,21 +69,21 @@ func BuildShortLinkFromConfig(cfg *Config, advertiseHost string) (string, error)
 		}
 	}
 
-	payload.DisableHTTPMask = cfg.DisableHTTPMask
-	mode := strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMode))
+	payload.DisableHTTPMask = cfg.HTTPMask.Disable
+	mode := strings.ToLower(strings.TrimSpace(cfg.HTTPMask.Mode))
 	if mode != "" && mode != "legacy" {
 		payload.HTTPMaskMode = mode
 	}
-	if cfg.HTTPMaskTLS {
+	if cfg.HTTPMask.TLS {
 		payload.HTTPMaskTLS = true
 	}
-	if strings.TrimSpace(cfg.HTTPMaskHost) != "" {
-		payload.HTTPMaskHost = strings.TrimSpace(cfg.HTTPMaskHost)
+	if strings.TrimSpace(cfg.HTTPMask.Host) != "" {
+		payload.HTTPMaskHost = strings.TrimSpace(cfg.HTTPMask.Host)
 	}
-	if strings.TrimSpace(cfg.HTTPMaskPathRoot) != "" {
-		payload.HTTPMaskPath = strings.TrimSpace(cfg.HTTPMaskPathRoot)
+	if strings.TrimSpace(cfg.HTTPMask.PathRoot) != "" {
+		payload.HTTPMaskPath = strings.TrimSpace(cfg.HTTPMask.PathRoot)
 	}
-	muxMode := strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMultiplex))
+	muxMode := strings.ToLower(strings.TrimSpace(cfg.HTTPMask.Multiplex))
 	if muxMode != "" && muxMode != "off" {
 		payload.HTTPMaskMux = muxMode
 	}
@@ -124,23 +124,25 @@ func BuildConfigFromShortLink(link string) (*Config, error) {
 	}
 
 	cfg := &Config{
-		Mode:              "client",
-		Transport:         "tcp",
-		LocalPort:         payload.MixPort,
-		ServerAddress:     net.JoinHostPort(payload.Host, strconv.Itoa(payload.Port)),
-		Key:               payload.Key,
-		CustomTable:       payload.CustomTable,
-		CustomTables:      append([]string(nil), payload.CustomTables...),
-		DisableHTTPMask:   payload.DisableHTTPMask,
-		HTTPMaskMode:      payload.HTTPMaskMode,
-		HTTPMaskTLS:       payload.HTTPMaskTLS,
-		HTTPMaskHost:      payload.HTTPMaskHost,
-		HTTPMaskPathRoot:  strings.TrimSpace(payload.HTTPMaskPath),
-		HTTPMaskMultiplex: strings.TrimSpace(payload.HTTPMaskMux),
-		AEAD:              payload.AEAD,
-		PaddingMin:        5,
-		PaddingMax:        15,
-		ProxyMode:         "pac",
+		Mode:          "client",
+		Transport:     "tcp",
+		LocalPort:     payload.MixPort,
+		ServerAddress: net.JoinHostPort(payload.Host, strconv.Itoa(payload.Port)),
+		Key:           payload.Key,
+		CustomTable:   payload.CustomTable,
+		CustomTables:  append([]string(nil), payload.CustomTables...),
+		HTTPMask: HTTPMaskConfig{
+			Disable:   payload.DisableHTTPMask,
+			Mode:      payload.HTTPMaskMode,
+			TLS:       payload.HTTPMaskTLS,
+			Host:      payload.HTTPMaskHost,
+			PathRoot:  strings.TrimSpace(payload.HTTPMaskPath),
+			Multiplex: strings.TrimSpace(payload.HTTPMaskMux),
+		},
+		AEAD:       payload.AEAD,
+		PaddingMin: 5,
+		PaddingMax: 15,
+		ProxyMode:  "pac",
 		RuleURLs: []string{
 			"https://gh-proxy.org/https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/China/China.list",
 			"https://gh-proxy.org/https://raw.githubusercontent.com/fernvenue/chn-cidr-list/master/ipv4.yaml",

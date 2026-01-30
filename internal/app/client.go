@@ -144,6 +144,8 @@ func RunClient(cfg *config.Config, tables []*sudoku.Table) {
 		}
 	}
 
+	startReverseClient(cfg, &baseDialer)
+
 	// 2. 初始化 GeoIP/PAC 管理器
 	var geoMgr *geodata.Manager
 	if cfg.ProxyMode == "pac" {

@@ -110,9 +110,9 @@ func newHalfPipe() (net.Conn, net.Conn) {
 		wrTx: cb2,
 		wrRx: cn2,
 
-		localReadDone:  r1,
-		localWriteDone: w1,
-		remoteReadDone: r2,
+		localReadDone:   r1,
+		localWriteDone:  w1,
+		remoteReadDone:  r2,
 		remoteWriteDone: w2,
 
 		readDeadline:  makePipeDeadline(),
@@ -124,9 +124,9 @@ func newHalfPipe() (net.Conn, net.Conn) {
 		wrTx: cb1,
 		wrRx: cn1,
 
-		localReadDone:  r2,
-		localWriteDone: w2,
-		remoteReadDone: r1,
+		localReadDone:   r2,
+		localWriteDone:  w2,
+		remoteReadDone:  r1,
 		remoteWriteDone: w1,
 
 		readDeadline:  makePipeDeadline(),
@@ -227,4 +227,3 @@ func (c *halfPipeConn) SetWriteDeadline(t time.Time) error {
 	c.writeDeadline.set(t)
 	return nil
 }
-

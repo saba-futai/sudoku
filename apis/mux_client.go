@@ -30,13 +30,8 @@ func NewMuxClient(cfg *ProtocolConfig) (*MuxClient, error) {
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("invalid config: %w", err)
 	}
-	if cfg.DisableHTTPMask {
-		return nil, fmt.Errorf("mux requires DisableHTTPMask=false")
-	}
-	switch strings.ToLower(strings.TrimSpace(cfg.HTTPMaskMode)) {
-	case "stream", "poll", "auto":
-	default:
-		return nil, fmt.Errorf("mux requires HTTPMaskMode=stream/poll/auto (got %q)", cfg.HTTPMaskMode)
+	if strings.TrimSpace(cfg.ServerAddress) == "" {
+		return nil, fmt.Errorf("ServerAddress cannot be empty")
 	}
 	return &MuxClient{cfg: cfg}, nil
 }

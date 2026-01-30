@@ -78,7 +78,7 @@ type TunnelDialOptions struct {
 	// It is called with the raw tunnel conn; if it returns a non-nil conn, that conn is returned by DialTunnel.
 	//
 	// Upgrade is primarily used to reduce RTT by sending initial bytes (e.g. protocol handshake) while the
-	// HTTP tunnel is still establishing (e.g. stream-one waiting for response headers).
+	// HTTP tunnel is still establishing.
 	Upgrade func(raw net.Conn) (net.Conn, error)
 	// Multiplex controls whether DialTunnel reuses underlying HTTP connections (keep-alive / h2).
 	// Values: "off" disables global reuse; "auto"/"on" enables it. Empty defaults to "auto".
@@ -86,7 +86,7 @@ type TunnelDialOptions struct {
 }
 
 // DialTunnel establishes a bidirectional stream over HTTP:
-//   - stream: a single streaming POST (request body uplink, response body downlink)
+//   - stream: split-stream (authorize + upload/pull endpoints; CDN-friendly)
 //   - poll: authorize + push/pull polling tunnel (base64 framed)
 //   - auto: try stream then fall back to poll
 //
@@ -177,210 +177,9 @@ func parseTunnelToken(body []byte) (string, error) {
 	return token, nil
 }
 
-type httpStreamConn struct {
-	reader io.ReadCloser
-	writer *io.PipeWriter
-	cancel context.CancelFunc
-
-	localAddr  net.Addr
-	remoteAddr net.Addr
-}
-
-func (c *httpStreamConn) Read(p []byte) (int, error) {
-	if c.reader == nil {
-		return 0, io.ErrClosedPipe
-	}
-	return c.reader.Read(p)
-}
-
-func (c *httpStreamConn) Write(p []byte) (int, error) { return c.writer.Write(p) }
-
-func (c *httpStreamConn) CloseWrite() error {
-	if c == nil || c.writer == nil {
-		return nil
-	}
-	return c.writer.Close()
-}
-
-func (c *httpStreamConn) CloseRead() error {
-	if c == nil || c.reader == nil {
-		return nil
-	}
-	return c.reader.Close()
-}
-
-func (c *httpStreamConn) Close() error {
-	var firstErr error
-	if c.cancel != nil {
-		c.cancel()
-	}
-	if c.writer != nil {
-		_ = c.writer.CloseWithError(io.ErrClosedPipe)
-	}
-	if c.reader != nil {
-		firstErr = c.reader.Close()
-	}
-	return firstErr
-}
-
-func (c *httpStreamConn) LocalAddr() net.Addr  { return c.localAddr }
-func (c *httpStreamConn) RemoteAddr() net.Addr { return c.remoteAddr }
-
-func (c *httpStreamConn) SetDeadline(time.Time) error      { return nil }
-func (c *httpStreamConn) SetReadDeadline(time.Time) error  { return nil }
-func (c *httpStreamConn) SetWriteDeadline(time.Time) error { return nil }
-
 func dialStream(ctx context.Context, serverAddress string, opts TunnelDialOptions) (net.Conn, error) {
-	// Prefer stream-one (lower RTT). Fall back to split-stream (Cloudflare-friendly) when stream-one stalls.
-	oneCtx := ctx
-	oneTimeout := 1500 * time.Millisecond
-	if dl, ok := ctx.Deadline(); ok {
-		if remain := time.Until(dl); remain > 0 && remain < oneTimeout {
-			oneTimeout = remain
-		}
-	}
-	if oneTimeout > 0 {
-		var cancel func()
-		oneCtx, cancel = context.WithTimeout(ctx, oneTimeout)
-		defer cancel()
-	}
-
-	c, errOne := dialStreamOne(oneCtx, serverAddress, opts)
-	if errOne == nil {
-		return c, nil
-	}
-	c2, errSplit := dialStreamSplit(ctx, serverAddress, opts)
-	if errSplit == nil {
-		return c2, nil
-	}
-	return nil, fmt.Errorf("dial stream failed: stream-one: %v; split: %w", errOne, errSplit)
-}
-
-func dialStreamOne(ctx context.Context, serverAddress string, opts TunnelDialOptions) (net.Conn, error) {
-	scheme, urlHost, dialAddr, serverName, err := normalizeHTTPDialTarget(serverAddress, opts.TLSEnabled, opts.HostOverride)
-	if err != nil {
-		return nil, err
-	}
-	headerHost := canonicalHeaderHost(urlHost, scheme)
-	auth := newTunnelAuth(opts.AuthKey, 0)
-
-	r := rngPool.Get().(*mrand.Rand)
-	basePath := paths[r.Intn(len(paths))]
-	path := joinPathRoot(opts.PathRoot, basePath)
-	ctype := contentTypes[r.Intn(len(contentTypes))]
-	rngPool.Put(r)
-
-	u := url.URL{
-		Scheme: scheme,
-		Host:   urlHost,
-		Path:   path,
-	}
-
-	reqBodyR, reqBodyW := io.Pipe()
-
-	connCtx, connCancel := context.WithCancel(context.Background())
-	req, err := http.NewRequestWithContext(connCtx, http.MethodPost, u.String(), reqBodyR)
-	if err != nil {
-		connCancel()
-		_ = reqBodyW.Close()
-		return nil, err
-	}
-	req.Host = headerHost
-
-	applyTunnelHeaders(req.Header, headerHost, TunnelModeStream)
-	applyTunnelAuth(req, auth, TunnelModeStream, http.MethodPost, basePath)
-	req.Header.Set("Content-Type", ctype)
-
-	client := newHTTPClient(urlHost, dialAddr, serverName, scheme, 32, multiplexEnabled(opts.Multiplex))
-
-	streamConn := &httpStreamConn{
-		writer:     reqBodyW,
-		cancel:     connCancel,
-		localAddr:  &net.TCPAddr{},
-		remoteAddr: &net.TCPAddr{},
-	}
-
-	type doResult struct {
-		resp *http.Response
-		err  error
-	}
-	doCh := make(chan doResult, 1)
-	go func() {
-		resp, doErr := client.Do(req)
-		doCh <- doResult{resp: resp, err: doErr}
-	}()
-
-	type upgradeResult struct {
-		conn net.Conn
-		err  error
-	}
-	upgradeCh := make(chan upgradeResult, 1)
-	if opts.Upgrade == nil {
-		upgradeCh <- upgradeResult{conn: streamConn, err: nil}
-	} else {
-		go func() {
-			upgradeConn, err := opts.Upgrade(streamConn)
-			if err != nil {
-				upgradeCh <- upgradeResult{conn: nil, err: err}
-				return
-			}
-			if upgradeConn == nil {
-				upgradeConn = streamConn
-			}
-			upgradeCh <- upgradeResult{conn: upgradeConn, err: nil}
-		}()
-	}
-
-	var (
-		outConn       net.Conn
-		upgradeDone   bool
-		responseReady bool
-	)
-
-	for !(upgradeDone && responseReady) {
-		select {
-		case <-ctx.Done():
-			_ = streamConn.Close()
-			if outConn != nil && outConn != streamConn {
-				_ = outConn.Close()
-			}
-			return nil, ctx.Err()
-
-		case u := <-upgradeCh:
-			if u.err != nil {
-				_ = streamConn.Close()
-				return nil, u.err
-			}
-			outConn = u.conn
-			if outConn == nil {
-				outConn = streamConn
-			}
-			upgradeDone = true
-
-		case r := <-doCh:
-			if r.err != nil {
-				_ = streamConn.Close()
-				if outConn != nil && outConn != streamConn {
-					_ = outConn.Close()
-				}
-				return nil, r.err
-			}
-			if r.resp.StatusCode != http.StatusOK {
-				body, _ := io.ReadAll(io.LimitReader(r.resp.Body, 4*1024))
-				_ = r.resp.Body.Close()
-				_ = streamConn.Close()
-				if outConn != nil && outConn != streamConn {
-					_ = outConn.Close()
-				}
-				return nil, fmt.Errorf("stream bad status: %s (%s)", r.resp.Status, strings.TrimSpace(string(body)))
-			}
-
-			streamConn.reader = r.resp.Body
-			responseReady = true
-		}
-	}
-
-	return outConn, nil
+	// "stream" mode uses split-stream to stay CDN-friendly by default.
+	return dialStreamSplit(ctx, serverAddress, opts)
 }
 
 type queuedConn struct {

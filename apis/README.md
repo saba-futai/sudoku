@@ -3,7 +3,7 @@
 面向其他开发者开放的纯 Sudoku 协议 API：HTTP 伪装 + 数独 ASCII/Entropy 混淆 + AEAD 加密。支持带宽优化下行（`enable_pure_downlink=false`）与 UoT（UDP over TCP）。
 
 ## 安装
-- 推荐指定已有 tag：`go get github.com/saba-futai/sudoku@v0.1.0`
+- 推荐指定已有 tag：`go get github.com/saba-futai/sudoku@v0.2.0`
 - 或者直接跟随最新提交：`go get github.com/saba-futai/sudoku`
 
 ## 配置要点
@@ -12,6 +12,7 @@
 - AEAD：`chacha20-poly1305`（默认）或 `aes-128-gcm`，`none` 仅测试用。
 - 填充：`PaddingMin`/`PaddingMax` 为 0-100 的概率百分比。
 - 客户端：设置 `ServerAddress`、`TargetAddress`。
+- 链式代理：可选 `ChainHops`（多跳 `host:port` 列表），会对每一跳执行完整握手，最后一跳才连接 `TargetAddress`。
 - 服务端：可设置 `HandshakeTimeoutSeconds` 限制握手耗时。
 
 ## 客户端示例
@@ -35,6 +36,7 @@ func main() {
 
 	cfg := &apis.ProtocolConfig{
 		ServerAddress: "1.2.3.4:8443",
+		// Optional: ChainHops: []string{"mid.example.com:443", "exit.example.com:443"},
 		TargetAddress: "example.com:443",
 		Key:           "shared-key-hex-or-plain",
 		AEADMethod:    "chacha20-poly1305",
@@ -181,10 +183,10 @@ base := &apis.ProtocolConfig{
 	PaddingMin:         5,
 	PaddingMax:         15,
 	EnablePureDownlink: true,
-	DisableHTTPMask:    false,
-	HTTPMaskMode:       "auto",
+	// HTTPMask/HTTP tunnel is recommended for CDN/proxy scenarios, but mux itself works on any tunnel.
+	DisableHTTPMask: false,
+	HTTPMaskMode:    "auto",
 	HTTPMaskTLSEnabled: true,
-	HTTPMaskMultiplex:  "on",
 }
 
 mux, _ := apis.NewMuxClient(base)
@@ -192,6 +194,43 @@ defer mux.Close()
 
 c1, _ := mux.Dial(ctx, "example.com:443")
 defer c1.Close()
+```
+
+## 服务端自动识别（Forward / UoT / Mux / Reverse）
+当服务端需要对齐 CLI 的全部会话类型（普通转发 / UoT / 单 tunnel 多目标 mux / 反向代理注册），可使用 `ServerHandshakeSessionAutoWithUserHash`：
+
+```go
+tunnelConn, session, target, userHash, err := apis.ServerHandshakeSessionAutoWithUserHash(rawConn, cfg)
+if err != nil {
+	return
+}
+switch session {
+case apis.SessionForward:
+	_ = target
+case apis.SessionUoT:
+	_ = apis.HandleUoT(tunnelConn)
+case apis.SessionMux:
+	_ = apis.HandleMuxServer(tunnelConn, nil)
+case apis.SessionReverse:
+	_ = userHash
+}
+```
+
+## 反向代理（Reverse Proxy over Sudoku）
+服务端创建一个 `ReverseManager` 作为 `http.Handler`，并在隧道连接上调用 `HandleServerSession`；客户端使用 `DialBase` + `ServeReverseClientSession` 注册路由并长期保持会话：
+
+```go
+mgr := apis.NewReverseManager()
+_ = mgr // use as http.Handler
+
+// Server side (after ServerHandshakeSessionAutoWithUserHash returns SessionReverse):
+_ = mgr.HandleServerSession(tunnelConn, userHash)
+
+// Client side:
+baseConn, _ := apis.DialBase(ctx, cfg)
+_ = apis.ServeReverseClientSession(baseConn, "client-id", []apis.ReverseRoute{
+	{Path: "/gitea", Target: "127.0.0.1:3000"},
+})
 ```
 
 ## 说明

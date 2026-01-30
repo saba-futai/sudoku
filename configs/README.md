@@ -18,12 +18,14 @@
   "padding_min": 5,
   "padding_max": 15,
   "enable_pure_downlink": true,
-  "disable_http_mask": false,
-  "http_mask_mode": "legacy",
-  "path_root": "",
-  "http_mask_tls": false,
-  "http_mask_host": "",
-  "http_mask_multiplex": "off"
+  "httpmask": {
+    "disable": false,
+    "mode": "legacy",
+    "tls": false,
+    "host": "",
+    "path_root": "",
+    "multiplex": "off"
+  }
 }
 ```
 
@@ -40,12 +42,14 @@
   "padding_min": 5,
   "padding_max": 15,
   "enable_pure_downlink": true,
-  "disable_http_mask": false,
-  "http_mask_mode": "legacy",
-  "path_root": "",
-  "http_mask_tls": false,
-  "http_mask_host": "",
-  "http_mask_multiplex": "off",
+  "httpmask": {
+    "disable": false,
+    "mode": "legacy",
+    "tls": false,
+    "host": "",
+    "path_root": "",
+    "multiplex": "off"
+  },
   "rule_urls": ["global"]
 }
 ```
@@ -77,21 +81,45 @@
   - `false`：下行启用 6-bit 拆分以提升带宽（要求 `aead != "none"`，且客户端/服务端必须一致）
 
 ### HTTP 伪装 / HTTP Tunnel
-- `disable_http_mask`：`true` 禁用所有 HTTP 伪装。
-- `http_mask_mode`：
-  - `"legacy"`：写一个伪造 HTTP/1.1 头后切到原始流（默认，非 CDN 模式）
-  - `"stream"` / `"poll"` / `"auto"`：CDN 友好的 HTTP tunnel 模式
-- HTTP tunnel 模式（`stream`/`poll`/`auto`）会强制启用基于 `key` 的短期 HMAC/Token 校验以减少主动探测，无需额外字段（强制更新）。
-- `http_mask_tls`：仅客户端 tunnel 模式生效；`true` 表示使用 HTTPS。
-- `http_mask_host`：仅客户端 tunnel 模式生效；覆盖 HTTP Host/SNI（可留空）。
-- `path_root`：可选，作为 **一级路径前缀**（双方需一致）。示例：填 `"aabbcc"` 后，端点会变为：
-  - `/<path_root>/session`
-  - `/<path_root>/stream`
-  - `/<path_root>/api/v1/upload`
-- `http_mask_multiplex`：
-  - `"off"`：不复用（每个目标单独建 tunnel）
-  - `"auto"`：复用底层 HTTP 连接（keep-alive / h2）
-  - `"on"`：开启“单隧道多目标”的 mux（客户端减少 RTT；服务端会看到 mux session）
+- 推荐使用新的 `httpmask` 对象统一管理 HTTP 伪装/隧道相关字段：
+  - `httpmask.disable`：`true` 禁用所有 HTTP 伪装。
+  - `httpmask.mode`：
+    - `"legacy"`：写一个伪造 HTTP/1.1 头后切到原始流（默认，非 CDN 模式）
+    - `"stream"` / `"poll"` / `"auto"`：CDN 友好的 HTTP tunnel 模式（通过 CDN 时建议用这些）
+  - HTTP tunnel 模式（`stream`/`poll`/`auto`）会强制启用基于 `key` 的短期 HMAC/Token 校验以减少主动探测，无需额外字段（强制更新）。
+  - `httpmask.tls`：仅客户端 tunnel 模式生效；`true` 表示使用 HTTPS。
+  - `httpmask.host`：仅客户端 tunnel 模式生效；覆盖 HTTP Host/SNI（可留空）。
+  - `httpmask.path_root`：可选，作为 **一级路径前缀**（双方需一致）。示例：填 `"aabbcc"` 后，端点会变为：
+    - `/<path_root>/session`
+    - `/<path_root>/stream`
+    - `/<path_root>/api/v1/upload`
+  - `httpmask.multiplex`：
+    - `"off"`：不复用（每个目标单独建 tunnel）
+    - `"auto"`：复用底层 HTTP 连接（keep-alive / h2）
+    - `"on"`：开启“单隧道多目标”的 mux（客户端减少 RTT；服务端会看到 mux session）
+
+兼容性：仍兼容旧版顶层字段 `disable_http_mask` / `http_mask_mode` / `http_mask_tls` / `http_mask_host` / `path_root` / `http_mask_multiplex` / `http_mask_path_root`，但建议迁移到 `httpmask`。
+
+### 链式代理（Chain Proxy）
+- `chain.hops`：仅客户端使用。多跳 Sudoku 代理列表（`host:port`），按顺序嵌套握手/建隧道，最后一跳才连接真正目标地址。
+
+示例：
+```json
+{
+  "server_address": "entry.example.com:443",
+  "chain": { "hops": ["mid.example.com:443", "exit.example.com:443"] }
+}
+```
+
+### 反向代理（Reverse Proxy over Sudoku）
+用于让 NAT 后的客户端把本地 HTTP 服务通过隧道暴露给服务端，再由服务端通过不同路径前缀访问。
+
+- 服务端：`reverse.listen`（如 `":8081"`）开启一个 HTTP 入口；通过 `http://<server>:8081/<path>/...` 访问。
+- 客户端：`reverse.routes` 声明要暴露的本地服务：
+  - `reverse.routes[].path`：对外路径前缀（如 `"/gitea"`）
+  - `reverse.routes[].target`：客户端本地 `host:port`（如 `"127.0.0.1:3000"`）
+  - `reverse.routes[].strip_prefix`：是否去掉前缀后再转发（默认 `true`）
+  - `reverse.routes[].host_header`：可选，覆盖转发时的 `Host`
 
 ### 其他
 - `rule_urls`：仅客户端 `proxy_mode=pac` 时使用；支持：

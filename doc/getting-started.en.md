@@ -10,7 +10,7 @@ Step-by-step instructions for absolute beginners to get a working client/server 
 ## 1) What you need
 - A server with a public IP / domain (or otherwise reachable by the client).
 - OS: Linux / macOS / Windows.
-- Either download the release binary or install Go 1.22+ to build it yourself.
+- Either download the release binary or install the Go toolchain version required by `go.mod` to build it yourself.
 - Ports: one public TCP port on the server (example: 8080), one local proxy port on the client (default 1080). Make sure the server port is open in firewall / security group.
 
 ## 2) Get the binary
@@ -61,7 +61,14 @@ Tip: if you don’t have a decoy web server on `fallback_address`, set `"suspici
   "padding_max": 15,
   "custom_table": "xpxvvpvv",
   "ascii": "prefer_entropy",
-  "disable_http_mask": false,
+  "httpmask": {
+    "disable": false,
+    "mode": "legacy",
+    "tls": false,
+    "host": "",
+    "path_root": "",
+    "multiplex": "off"
+  },
   "rule_urls": ["global"]
 }
 ```
@@ -73,9 +80,9 @@ Tip: if you don’t have a decoy web server on `fallback_address`, set `"suspici
 ## 5.1) Optional: Cloudflare CDN (orange cloud)
 To run through Cloudflare (or other CDN/reverse-proxy), use real HTTP tunnel modes (`stream` / `poll` / `auto`). Do not use `legacy`.
 
-- Server: set `"disable_http_mask": false` and `"http_mask_mode": "poll"` (or `"auto"`).
+- Server: set `"httpmask": { "disable": false, "mode": "poll" }` (or `"auto"`).
 - Client: same, and set `"server_address": "your.domain.com:443"` (or other Cloudflare-supported HTTP(S) ports like `8080`/`8443`).
-- Set `"http_mask_tls": true` to use HTTPS (no port-based inference).
+- Set `"httpmask": { "tls": true }` to use HTTPS (no port-based inference).
 
 ## 6) Run
 ```bash
