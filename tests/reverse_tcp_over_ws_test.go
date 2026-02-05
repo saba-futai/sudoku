@@ -55,6 +55,7 @@ func TestReverseProxy_TCPOverWebSocket_Subpath(t *testing.T) {
 		Routes:   []config.ReverseRoute{{Path: "/ssh", Target: originAddr}},
 	}
 	startSudokuClient(t, clientCfg)
+	waitForReverseRouteReady(t, reverseListen, "/ssh")
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()

@@ -69,6 +69,7 @@ func TestReverseProxy_WebSocket_Subpath(t *testing.T) {
 		Routes:   []config.ReverseRoute{{Path: "/app", Target: originAddr}},
 	}
 	startSudokuClient(t, clientCfg)
+	waitForReverseRouteReady(t, reverseListen, "/app")
 
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 

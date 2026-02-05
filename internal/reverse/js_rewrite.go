@@ -169,6 +169,10 @@ func rewriteJavaScriptRootAbsolutePaths(in []byte, prefix string) []byte {
 				continue
 			}
 			if i == stringStart && c == '/' {
+				if i+1 < len(in) && in[i+1] == delim {
+					// Bare "/" (often used as separators) is not necessarily a URL.
+					continue
+				}
 				if i+1 < len(in) && in[i+1] == '/' {
 					// Protocol-relative: keep.
 					continue
@@ -200,6 +204,10 @@ func rewriteJavaScriptRootAbsolutePaths(in []byte, prefix string) []byte {
 			}
 
 			if i > 0 && in[i-1] == '`' && c == '/' {
+				if i+1 < len(in) && in[i+1] == '`' {
+					// Bare "/" in a template literal.
+					continue
+				}
 				if i+1 < len(in) && in[i+1] == '/' {
 					continue
 				}

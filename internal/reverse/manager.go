@@ -596,7 +596,11 @@ func rewriteTextBody(resp *http.Response, prefix string) error {
 			return nil
 		}
 
-		rewritten := rewriteTextPayload(ct, raw, prefix)
+		reqPath := ""
+		if resp.Request != nil && resp.Request.URL != nil {
+			reqPath = resp.Request.URL.Path
+		}
+		rewritten := rewriteTextPayload(ct, reqPath, raw, prefix)
 		if bytes.Equal(raw, rewritten) {
 			// No changes: keep original gzip response to preserve caching headers/ETags.
 			resp.Body = io.NopCloser(bytes.NewReader(compressed))
@@ -629,7 +633,11 @@ func rewriteTextBody(resp *http.Response, prefix string) error {
 	}
 	_ = resp.Body.Close()
 
-	rewritten := rewriteTextPayload(ct, raw, prefix)
+	reqPath := ""
+	if resp.Request != nil && resp.Request.URL != nil {
+		reqPath = resp.Request.URL.Path
+	}
+	rewritten := rewriteTextPayload(ct, reqPath, raw, prefix)
 	if bytes.Equal(raw, rewritten) {
 		resp.Body = io.NopCloser(bytes.NewReader(raw))
 		resp.ContentLength = int64(len(raw))
@@ -676,9 +684,16 @@ func inferContentTypeFromPath(p string) string {
 	}
 }
 
-func rewriteTextPayload(contentType string, in []byte, prefix string) []byte {
+func rewriteTextPayload(contentType, reqPath string, in []byte, prefix string) []byte {
 	if in == nil {
 		return nil
+	}
+
+	if !isJavaScriptContentType(contentType) && reqPath != "" {
+		// Some origins serve JS with a generic Content-Type (e.g. text/plain); infer from path.
+		if inferContentTypeFromPath(reqPath) == "application/javascript" {
+			contentType = "application/javascript"
+		}
 	}
 
 	var out []byte
@@ -879,6 +894,10 @@ func rewriteRootAbsolutePaths(in []byte, prefix string) []byte {
 		if !isRootPathContext(in, i) {
 			continue
 		}
+		if i+1 < len(in) && isURLTerminalByte(in[i+1]) {
+			// Bare "/" (e.g. JSON separator="/") is not a URL path and rewriting it breaks apps.
+			continue
+		}
 		if i+1 < len(in) && in[i+1] == '/' {
 			// Protocol-relative URL ("//example.com/...").
 			continue
@@ -898,6 +917,15 @@ func rewriteRootAbsolutePaths(in []byte, prefix string) []byte {
 	return out.Bytes()
 }
 
+func isURLTerminalByte(b byte) bool {
+	switch b {
+	case '"', '\'', '`', ')', ',', ';', ' ', '\t', '\n', '\r', '\f':
+		return true
+	default:
+		return false
+	}
+}
+
 func urlHasPathPrefix(u []byte, prefix []byte) bool {
 	if len(u) == 0 || len(prefix) == 0 {
 		return false
@@ -910,6 +938,10 @@ func urlHasPathPrefix(u []byte, prefix []byte) bool {
 	}
 	switch u[len(prefix)] {
 	case '/', '?', '#':
+		return true
+	case '"', '\'', '`', ')', ',', ';', ' ', '\t', '\n', '\r', '\f':
+		// Many rewrites operate on a larger byte slice than the URL token itself.
+		// Treat common token terminators as a valid boundary so rewriting is idempotent.
 		return true
 	default:
 		return false

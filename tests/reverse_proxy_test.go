@@ -71,6 +71,7 @@ func TestReverseProxy_PathPrefix(t *testing.T) {
 		Routes:   []config.ReverseRoute{{Path: "/gitea", Target: originAddr}},
 	}
 	startSudokuClient(t, clientCfg)
+	waitForReverseRouteReady(t, reverseListen, "/gitea")
 
 	noFollowClient := &http.Client{
 		Timeout: 5 * time.Second,
@@ -165,6 +166,7 @@ func TestReverseProxy_PathPrefix_Srcset(t *testing.T) {
 		Routes:   []config.ReverseRoute{{Path: "/gitea", Target: originAddr}},
 	}
 	startSudokuClient(t, clientCfg)
+	waitForReverseRouteReady(t, reverseListen, "/gitea")
 
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 	resp, err := httpClient.Get(fmt.Sprintf("http://%s/gitea/", reverseListen))
@@ -231,6 +233,7 @@ func TestReverseProxy_RefererFallback_RootPaths(t *testing.T) {
 		Routes:   []config.ReverseRoute{{Path: "/gitea", Target: originAddr}},
 	}
 	startSudokuClient(t, clientCfg)
+	waitForReverseRouteReady(t, reverseListen, "/gitea")
 
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
@@ -340,6 +343,7 @@ func TestReverseProxy_PathPrefix_GzipOrigin(t *testing.T) {
 		Routes:   []config.ReverseRoute{{Path: "/gitea", Target: originAddr}},
 	}
 	startSudokuClient(t, clientCfg)
+	waitForReverseRouteReady(t, reverseListen, "/gitea")
 
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
@@ -424,5 +428,133 @@ func TestReverseProxy_PathPrefix_GzipOrigin(t *testing.T) {
 	_ = resp.Body.Close()
 	if resp.StatusCode != http.StatusOK || string(pong) != "pong" {
 		t.Fatalf("expected pong, got status=%d body=%q", resp.StatusCode, string(pong))
+	}
+}
+
+func TestReverseProxy_HTML_BareSlashNotRewritten(t *testing.T) {
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/":
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			// separator "/" is a plain value (not a URL) and must not be rewritten.
+			_, _ = w.Write([]byte(`<html><head><script>window.cfg={"separator":"/","api":"/api/ping","bg":"/backgrounds"}</script></head></html>`))
+		case "/api/ping":
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte("pong"))
+		case "/backgrounds":
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte("bg"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer origin.Close()
+	originAddr := strings.TrimPrefix(origin.URL, "http://")
+
+	serverKey, clientKey := newTestKeys(t)
+
+	ports, err := getFreePorts(3)
+	if err != nil {
+		t.Fatalf("ports: %v", err)
+	}
+	serverPort := ports[0]
+	clientPort := ports[1]
+	reversePort := ports[2]
+
+	reverseListen := localServerAddr(reversePort)
+
+	serverCfg := newTestServerConfig(serverPort, serverKey)
+	serverCfg.Reverse = &config.ReverseConfig{Listen: reverseListen}
+	startSudokuServer(t, serverCfg)
+	waitForAddr(t, reverseListen)
+
+	clientCfg := newTestClientConfig(clientPort, localServerAddr(serverPort), clientKey)
+	clientCfg.Reverse = &config.ReverseConfig{
+		ClientID: "r4s",
+		Routes:   []config.ReverseRoute{{Path: "/gitea", Target: originAddr}},
+	}
+	startSudokuClient(t, clientCfg)
+	waitForReverseRouteReady(t, reverseListen, "/gitea")
+
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	resp, err := httpClient.Get(fmt.Sprintf("http://%s/gitea/", reverseListen))
+	if err != nil {
+		t.Fatalf("reverse html: %v", err)
+	}
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reverse html status: %d", resp.StatusCode)
+	}
+	body := string(bodyBytes)
+	if !strings.Contains(body, `"separator":"/"`) {
+		t.Fatalf("expected bare slash to remain unchanged, got: %q", body)
+	}
+	if !strings.Contains(body, `"api":"/gitea/api/ping"`) {
+		t.Fatalf("expected rewritten api url, got: %q", body)
+	}
+	if !strings.Contains(body, `"bg":"/gitea/backgrounds"`) {
+		t.Fatalf("expected rewritten backgrounds url, got: %q", body)
+	}
+}
+
+func TestReverseProxy_JS_MisleadingContentType_UsesJSRewrite(t *testing.T) {
+	origin := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/app.js":
+			// Simulate a server that serves JS with a generic Content-Type.
+			w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+			_, _ = w.Write([]byte(`fetch("/api/ping"); const re=/"/g;`))
+		case "/api/ping":
+			w.Header().Set("Content-Type", "text/plain")
+			_, _ = w.Write([]byte("pong"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer origin.Close()
+	originAddr := strings.TrimPrefix(origin.URL, "http://")
+
+	serverKey, clientKey := newTestKeys(t)
+
+	ports, err := getFreePorts(3)
+	if err != nil {
+		t.Fatalf("ports: %v", err)
+	}
+	serverPort := ports[0]
+	clientPort := ports[1]
+	reversePort := ports[2]
+
+	reverseListen := localServerAddr(reversePort)
+
+	serverCfg := newTestServerConfig(serverPort, serverKey)
+	serverCfg.Reverse = &config.ReverseConfig{Listen: reverseListen}
+	startSudokuServer(t, serverCfg)
+	waitForAddr(t, reverseListen)
+
+	clientCfg := newTestClientConfig(clientPort, localServerAddr(serverPort), clientKey)
+	clientCfg.Reverse = &config.ReverseConfig{
+		ClientID: "r4s",
+		Routes:   []config.ReverseRoute{{Path: "/gitea", Target: originAddr}},
+	}
+	startSudokuClient(t, clientCfg)
+	waitForReverseRouteReady(t, reverseListen, "/gitea")
+
+	httpClient := &http.Client{Timeout: 5 * time.Second}
+	resp, err := httpClient.Get(fmt.Sprintf("http://%s/gitea/app.js", reverseListen))
+	if err != nil {
+		t.Fatalf("reverse js: %v", err)
+	}
+	bodyBytes, _ := io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("reverse js status: %d", resp.StatusCode)
+	}
+	body := string(bodyBytes)
+	if !strings.Contains(body, `fetch("/gitea/api/ping")`) {
+		t.Fatalf("expected rewritten js root path, got: %q", body)
+	}
+	if !strings.Contains(body, `const re=/"/g;`) {
+		t.Fatalf("expected regex literal to remain unchanged, got: %q", body)
 	}
 }

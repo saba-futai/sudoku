@@ -76,6 +76,7 @@ func TestBDD_ReverseProxy_WebUI_BehindTLSEdge(t *testing.T) {
 		Routes:   []config.ReverseRoute{{Path: "/app", Target: originAddr}},
 	}
 	startSudokuClient(t, clientCfg)
+	waitForReverseRouteReady(t, reverseListen, "/app")
 
 	// And: an "edge" reverse proxy (CDN-like) that terminates TLS and forwards to reverse.listen.
 	targetURL, _ := url.Parse("http://" + reverseListen)
@@ -194,6 +195,7 @@ func TestBDD_ReverseProxy_TCPOverWS_BehindTLSEdge_WithBuiltInForwarder(t *testin
 		Routes:   []config.ReverseRoute{{Path: "/ssh", Target: originAddr}},
 	}
 	startSudokuClient(t, clientCfg)
+	waitForReverseRouteReady(t, reverseListen, "/ssh")
 
 	// And: an "edge" reverse proxy (CDN-like) that terminates TLS and forwards to reverse.listen.
 	targetURL, _ := url.Parse("http://" + reverseListen)
@@ -288,6 +290,7 @@ func TestBDD_ReverseProxy_HTTPMaskTunnel_StillWorks(t *testing.T) {
 		Routes:   []config.ReverseRoute{{Path: "/app", Target: originAddr}},
 	}
 	startSudokuClient(t, clientCfg)
+	waitForReverseRouteReady(t, reverseListen, "/app")
 
 	httpClient := &http.Client{Timeout: 5 * time.Second}
 
@@ -390,6 +393,7 @@ func TestBDD_ReverseProxy_SubpathAssets_RedirectAndCookies_BehindTLSEdge(t *test
 		Routes:   []config.ReverseRoute{{Path: "/app", Target: originAddr}},
 	}
 	startSudokuClient(t, clientCfg)
+	waitForReverseRouteReady(t, reverseListen, "/app")
 
 	// And: an "edge" reverse proxy (CDN-like) that terminates TLS and forwards to reverse.listen.
 	targetURL, _ := url.Parse("http://" + reverseListen)
