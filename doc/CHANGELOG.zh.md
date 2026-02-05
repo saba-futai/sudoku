@@ -12,6 +12,7 @@
 - `reverse`: 反向代理支持纯 TCP 转发：当 `reverse.routes[].path` 为空时，`reverse.listen` 上的非 HTTP 入站连接会被当作原始 TCP 流量转发到客户端目标（每个入口仅支持 1 条 TCP 路由）。
 - `cli`: 新增内置本地端口转发器：`-rev-dial` / `-rev-listen` / `-rev-insecure`（用于把本地 TCP 通过 TCP-over-WebSocket 隧道转发）。
 - `tunnel`: 修复双向 Pipe 在对端不支持 half-close 时的关闭行为，避免隧道连接“卡住不退出”，使内置转发器（含 SSH）稳定可用。
+- `tunnel`: 修复 mux 会话在对端异常断开（`ECONNRESET`）时被误判为错误导致的偶发失败，提升 CI 与压力测试稳定性。
 - `tests`: 新增 BDD 场景测试，模拟 TLS Edge/CDN、内置转发器与 HTTPMask 隧道，验证 HTTP 子路径与 TCP-over-WS 可用性。
 - `deps`: 替换弃用的 `nhooyr.io/websocket` 为 `github.com/coder/websocket`。
 - `ci`: release workflow 在构建发布产物前先跑严格测试，避免未验证版本被发布。
