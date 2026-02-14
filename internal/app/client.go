@@ -58,13 +58,18 @@ func (c *PeekConn) Read(p []byte) (n int, err error) {
 
 // DNSCache 简单的 DNS 缓存
 type DNSCache struct {
-	cache map[string]net.IP
+	cache map[string]dnsCacheEntry
 	mu    sync.RWMutex
 	ttl   time.Duration
 }
 
+type dnsCacheEntry struct {
+	ip        net.IP
+	expiresAt time.Time
+}
+
 var globalDNSCache = &DNSCache{
-	cache: make(map[string]net.IP),
+	cache: make(map[string]dnsCacheEntry),
 	ttl:   10 * time.Minute,
 }
 
@@ -84,24 +89,48 @@ func normalizeClientKey(cfg *config.Config) ([]byte, bool, error) {
 }
 
 func (d *DNSCache) Lookup(host string) net.IP {
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-	if ip, ok := d.cache[host]; ok {
-		return ip
+	host = normalizeDNSHost(host)
+	if host == "" {
+		return nil
 	}
-	return nil
+
+	d.mu.RLock()
+	entry, ok := d.cache[host]
+	d.mu.RUnlock()
+	if !ok {
+		return nil
+	}
+	now := time.Now()
+	if d.ttl > 0 && now.After(entry.expiresAt) {
+		d.mu.Lock()
+		if latest, ok := d.cache[host]; ok && now.After(latest.expiresAt) {
+			delete(d.cache, host)
+		}
+		d.mu.Unlock()
+		return nil
+	}
+	return append(net.IP(nil), entry.ip...)
 }
 
 func (d *DNSCache) Set(host string, ip net.IP) {
+	host = normalizeDNSHost(host)
+	if host == "" || ip == nil {
+		return
+	}
+
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.cache[host] = ip
-	// 简单的清理逻辑，实际可以使用更复杂的过期策略
-	time.AfterFunc(d.ttl, func() {
-		d.mu.Lock()
-		delete(d.cache, host)
-		d.mu.Unlock()
-	})
+	if d.ttl <= 0 {
+		d.ttl = 10 * time.Minute
+	}
+	d.cache[host] = dnsCacheEntry{
+		ip:        append(net.IP(nil), ip...),
+		expiresAt: time.Now().Add(d.ttl),
+	}
+}
+
+func normalizeDNSHost(host string) string {
+	return strings.ToLower(strings.TrimSpace(host))
 }
 
 func RunClient(cfg *config.Config, tables []*sudoku.Table) {
@@ -617,17 +646,10 @@ func handleHTTP(conn net.Conn, cfg *config.Config, table *sudoku.Table, geoMgr *
 
 	host := req.Host
 	// 如果不带端口，默认补全
-	if !strings.Contains(host, ":") {
-		if req.Method == http.MethodConnect {
-			host += ":443"
-		} else {
-			host += ":80"
-		}
-	}
+	host = ensureHostPort(host, req.Method)
 
 	// 解析 IP (为了路由决策)
-	hostName, _, _ := net.SplitHostPort(host)
-	destIP := net.ParseIP(hostName)
+	destIP := net.ParseIP(hostOnly(host))
 
 	// 路由决策与连接
 	targetConn, success := dialTarget(host, destIP, cfg, geoMgr, dialer)
@@ -686,7 +708,7 @@ func dialTarget(destAddrStr string, destIP net.IP, cfg *config.Config, geoMgr *g
 		} else {
 			// 2. 如果没有匹配且 destIP 未知 (是域名)，尝试解析 IP 再检查
 			if destIP == nil {
-				host, _, _ := net.SplitHostPort(destAddrStr)
+				host := hostOnly(destAddrStr)
 
 				// Try Cache First
 				if cachedIP := globalDNSCache.Lookup(host); cachedIP != nil {
@@ -699,7 +721,7 @@ func dialTarget(destAddrStr string, destIP net.IP, cfg *config.Config, geoMgr *g
 				} else {
 					// Real Lookup
 					ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-					ips, err := net.DefaultResolver.LookupIP(ctx, "ip4", host)
+					ips, err := net.DefaultResolver.LookupIP(ctx, "ip", host)
 					cancel()
 
 					if err == nil && len(ips) > 0 {
@@ -737,4 +759,50 @@ func dialTarget(destAddrStr string, destIP net.IP, cfg *config.Config, geoMgr *g
 		}
 		return dConn, true
 	}
+}
+
+func defaultPortForMethod(method string) string {
+	if method == http.MethodConnect {
+		return "443"
+	}
+	return "80"
+}
+
+func ensureHostPort(host string, method string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return host
+	}
+	if _, _, err := net.SplitHostPort(host); err == nil {
+		return host
+	}
+
+	port := defaultPortForMethod(method)
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		inner := strings.TrimPrefix(strings.TrimSuffix(host, "]"), "[")
+		if ip := net.ParseIP(inner); ip != nil {
+			return net.JoinHostPort(ip.String(), port)
+		}
+	}
+	if ip := net.ParseIP(host); ip != nil {
+		return net.JoinHostPort(ip.String(), port)
+	}
+	if strings.Contains(host, ":") {
+		// Likely a malformed IPv6 literal without brackets; keep as-is and let downstream fail fast.
+		return host
+	}
+	return net.JoinHostPort(host, port)
+}
+
+func hostOnly(addr string) string {
+	addr = strings.TrimSpace(addr)
+	if addr == "" {
+		return ""
+	}
+	if h, _, err := net.SplitHostPort(addr); err == nil {
+		addr = h
+	}
+	addr = strings.TrimPrefix(addr, "[")
+	addr = strings.TrimSuffix(addr, "]")
+	return addr
 }

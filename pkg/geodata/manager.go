@@ -33,8 +33,14 @@ type IPRange struct {
 	End   uint32
 }
 
+type IPv6Range struct {
+	Start [16]byte
+	End   [16]byte
+}
+
 type Manager struct {
 	ipRanges     []IPRange
+	ipv6Ranges   []IPv6Range
 	domainExact  map[string]struct{} // 精确匹配 DOMAIN
 	domainSuffix map[string]struct{} // 后缀匹配 DOMAIN-SUFFIX
 	mu           sync.RWMutex
@@ -44,6 +50,13 @@ type Manager struct {
 // RuleSet 用于解析 YAML 格式的 payload
 type RuleSet struct {
 	Payload []string `yaml:"payload"`
+}
+
+type ruleBuildState struct {
+	ipv4   []IPRange
+	ipv6   []IPv6Range
+	exact  map[string]struct{}
+	suffix map[string]struct{}
 }
 
 var instance *Manager
@@ -65,28 +78,31 @@ func GetInstance(urls []string) *Manager {
 func (m *Manager) Update() {
 	log.Printf("[GeoData] Updating rules from %d sources...", len(m.urls))
 
-	var tempRanges []IPRange
-	tempExact := make(map[string]struct{})
-	tempSuffix := make(map[string]struct{})
+	state := &ruleBuildState{
+		exact:  make(map[string]struct{}),
+		suffix: make(map[string]struct{}),
+	}
 
 	for _, u := range m.urls {
-		m.downloadAndParse(u, &tempRanges, tempExact, tempSuffix)
+		m.downloadAndParse(u, state)
 	}
 
 	// 优化 IP 区间
-	mergedIPs := mergeRanges(tempRanges)
+	mergedIPs := mergeRanges(state.ipv4)
+	mergedIPv6 := mergeIPv6Ranges(state.ipv6)
 
 	m.mu.Lock()
 	m.ipRanges = mergedIPs
-	m.domainExact = tempExact
-	m.domainSuffix = tempSuffix
+	m.ipv6Ranges = mergedIPv6
+	m.domainExact = state.exact
+	m.domainSuffix = state.suffix
 	m.mu.Unlock()
 
-	log.Printf("[GeoData] Rules Updated: %d IP Ranges, %d Domains, %d Suffixes",
-		len(mergedIPs), len(tempExact), len(tempSuffix))
+	log.Printf("[GeoData] Rules Updated: %d IPv4 Ranges, %d IPv6 Ranges, %d Domains, %d Suffixes",
+		len(mergedIPs), len(mergedIPv6), len(state.exact), len(state.suffix))
 }
 
-func (m *Manager) downloadAndParse(url string, ipRanges *[]IPRange, exact, suffix map[string]struct{}) {
+func (m *Manager) downloadAndParse(url string, state *ruleBuildState) {
 	client := http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
@@ -106,7 +122,7 @@ func (m *Manager) downloadAndParse(url string, ipRanges *[]IPRange, exact, suffi
 	var rs RuleSet
 	if err := yaml.Unmarshal(body, &rs); err == nil && len(rs.Payload) > 0 {
 		for _, rule := range rs.Payload {
-			m.parseRule(rule, ipRanges, exact, suffix)
+			parseRule(rule, state)
 		}
 		return
 	}
@@ -119,7 +135,7 @@ func (m *Manager) downloadAndParse(url string, ipRanges *[]IPRange, exact, suffi
 		if err != nil && err != io.EOF {
 			break
 		}
-		m.parseRule(line, ipRanges, exact, suffix)
+		parseRule(line, state)
 		if err == io.EOF {
 			break
 		}
@@ -127,7 +143,7 @@ func (m *Manager) downloadAndParse(url string, ipRanges *[]IPRange, exact, suffi
 }
 
 // parseRule 统一处理单行规则字符串
-func (m *Manager) parseRule(line string, ipRanges *[]IPRange, exact, suffix map[string]struct{}) {
+func parseRule(line string, state *ruleBuildState) {
 	line = strings.TrimSpace(line)
 	if line == "" || strings.HasPrefix(line, "#") || strings.HasPrefix(line, "//") {
 		return
@@ -142,38 +158,115 @@ func (m *Manager) parseRule(line string, ipRanges *[]IPRange, exact, suffix map[
 
 		switch ruleType {
 		case "DOMAIN":
-			exact[ruleValue] = struct{}{}
+			if v := normalizeRuleDomain(ruleValue); v != "" {
+				state.exact[v] = struct{}{}
+			}
 		case "DOMAIN-SUFFIX":
-			suffix[ruleValue] = struct{}{}
+			if v := normalizeRuleDomain(ruleValue); v != "" {
+				state.suffix[v] = struct{}{}
+			}
 		case "IP-CIDR", "IP-CIDR6":
-			// 处理 IP-CIDR,1.2.3.4/24
-			parseIPLine(ruleValue, ipRanges)
+			parseIPLine(ruleValue, state)
 		}
 		return
 	}
 
 	// 2. 尝试解析纯 CIDR 或 IP
-	parseIPLine(line, ipRanges)
+	parseIPLine(line, state)
 }
 
-func parseIPLine(line string, list *[]IPRange) {
-	// 移除可能的引号
+func parseIPLine(line string, state *ruleBuildState) {
 	line = strings.Trim(line, "'\"")
-
-	_, ipNet, err := net.ParseCIDR(line)
-	if err != nil {
-		// 尝试作为单 IP
-		ip := net.ParseIP(line)
-		if ip != nil {
-			val := ipToUint32(ip)
-			*list = append(*list, IPRange{Start: val, End: val})
-		}
+	line = strings.TrimSpace(line)
+	if line == "" {
 		return
 	}
-	start := ipToUint32(ipNet.IP)
-	mask := binary.BigEndian.Uint32(ipNet.Mask)
-	end := start | (^mask)
-	*list = append(*list, IPRange{Start: start, End: end})
+
+	if _, ipNet, err := net.ParseCIDR(line); err == nil {
+		if ip4 := ipNet.IP.To4(); ip4 != nil {
+			start := ipToUint32(ip4)
+			mask := binary.BigEndian.Uint32(ipNet.Mask)
+			end := start | (^mask)
+			state.ipv4 = append(state.ipv4, IPRange{Start: start, End: end})
+			return
+		}
+		ip16 := ipNet.IP.To16()
+		if ip16 == nil {
+			return
+		}
+		var start [16]byte
+		var end [16]byte
+		copy(start[:], ip16)
+		for i := 0; i < 16; i++ {
+			mask := byte(0)
+			if i < len(ipNet.Mask) {
+				mask = ipNet.Mask[i]
+			}
+			end[i] = start[i] | (^mask)
+		}
+		state.ipv6 = append(state.ipv6, IPv6Range{Start: start, End: end})
+		return
+	}
+
+	ip := net.ParseIP(line)
+	if ip == nil {
+		return
+	}
+	if ip4 := ip.To4(); ip4 != nil {
+		val := ipToUint32(ip4)
+		state.ipv4 = append(state.ipv4, IPRange{Start: val, End: val})
+		return
+	}
+	ip16 := ip.To16()
+	if ip16 == nil {
+		return
+	}
+	var v6 [16]byte
+	copy(v6[:], ip16)
+	state.ipv6 = append(state.ipv6, IPv6Range{Start: v6, End: v6})
+}
+
+func normalizeRuleDomain(v string) string {
+	v = strings.Trim(v, "'\"")
+	v = strings.TrimSpace(strings.ToLower(v))
+	v = strings.TrimSuffix(v, ".")
+	v = strings.TrimPrefix(v, ".")
+	return v
+}
+
+func normalizeLookupHost(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return ""
+	}
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	host = strings.TrimPrefix(host, "[")
+	host = strings.TrimSuffix(host, "]")
+	host = strings.TrimSuffix(host, ".")
+	return strings.ToLower(host)
+}
+
+func matchIPv4Range(ranges []IPRange, ip net.IP) bool {
+	ip4 := ip.To4()
+	if ip4 == nil {
+		return false
+	}
+	val := ipToUint32(ip4)
+	idx := sort.Search(len(ranges), func(i int) bool { return ranges[i].End >= val })
+	return idx < len(ranges) && ranges[idx].Start <= val
+}
+
+func matchIPv6Range(ranges []IPv6Range, ip net.IP) bool {
+	ip16 := ip.To16()
+	if ip16 == nil {
+		return false
+	}
+	var key [16]byte
+	copy(key[:], ip16)
+	idx := sort.Search(len(ranges), func(i int) bool { return compareIPv6(ranges[i].End, key) >= 0 })
+	return idx < len(ranges) && compareIPv6(ranges[idx].Start, key) <= 0
 }
 
 // IsCN 检查目标是否匹配 CN 规则 (域名优先，其次 IP)
@@ -188,9 +281,10 @@ func (m *Manager) IsCN(host string, ip net.IP) bool {
 	}
 
 	// 1. Domain matching
-	if ip == nil || (len(host) > 0 && host != ip.String()) {
-		// This is a domain
-		domain := strings.TrimSuffix(host, ".") // Remove trailing dot
+	host = normalizeLookupHost(host)
+	hostIP := net.ParseIP(host)
+	if host != "" && (hostIP == nil || ip == nil || !hostIP.Equal(ip)) {
+		domain := host
 
 		// Exact match
 		if _, ok := m.domainExact[domain]; ok {
@@ -210,19 +304,10 @@ func (m *Manager) IsCN(host string, ip net.IP) bool {
 
 	// 2. IP matching
 	if ip != nil {
-		ip4 := ip.To4()
-		if ip4 == nil {
-			return false // IPv6 not supported for direct connection rules, default proxy
+		if ip.To4() != nil {
+			return matchIPv4Range(m.ipRanges, ip)
 		}
-		val := ipToUint32(ip4)
-
-		idx := sort.Search(len(m.ipRanges), func(i int) bool {
-			return m.ipRanges[i].End >= val
-		})
-
-		if idx < len(m.ipRanges) && m.ipRanges[idx].Start <= val {
-			return true
-		}
+		return matchIPv6Range(m.ipv6Ranges, ip)
 	}
 
 	return false
@@ -257,6 +342,34 @@ func mergeRanges(ranges []IPRange) []IPRange {
 	}
 	result = append(result, current)
 	return result
+}
+
+func mergeIPv6Ranges(ranges []IPv6Range) []IPv6Range {
+	if len(ranges) == 0 {
+		return nil
+	}
+	sort.Slice(ranges, func(i, j int) bool {
+		return compareIPv6(ranges[i].Start, ranges[j].Start) < 0
+	})
+	result := make([]IPv6Range, 0, len(ranges))
+	current := ranges[0]
+	for i := 1; i < len(ranges); i++ {
+		next := ranges[i]
+		if compareIPv6(current.End, next.Start) >= 0 {
+			if compareIPv6(next.End, current.End) > 0 {
+				current.End = next.End
+			}
+		} else {
+			result = append(result, current)
+			current = next
+		}
+	}
+	result = append(result, current)
+	return result
+}
+
+func compareIPv6(a, b [16]byte) int {
+	return bytes.Compare(a[:], b[:])
 }
 
 func (m *Manager) isLocalNetwork(ip net.IP) bool {

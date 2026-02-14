@@ -58,7 +58,7 @@ func (m *MockDialer) Dial(destAddrStr string) (net.Conn, error) {
 
 func TestDNSCache(t *testing.T) {
 	cache := &DNSCache{
-		cache: make(map[string]net.IP),
+		cache: make(map[string]dnsCacheEntry),
 		ttl:   100 * time.Millisecond,
 	}
 
@@ -77,6 +77,27 @@ func TestDNSCache(t *testing.T) {
 	got = cache.Lookup(host)
 	if got != nil {
 		t.Errorf("Cache expiration failed: got %v, want nil", got)
+	}
+}
+
+func TestDNSCache_RefreshKeepsLatestValue(t *testing.T) {
+	cache := &DNSCache{
+		cache: make(map[string]dnsCacheEntry),
+		ttl:   120 * time.Millisecond,
+	}
+
+	host := "example.com"
+	ip1 := net.ParseIP("1.2.3.4")
+	ip2 := net.ParseIP("5.6.7.8")
+
+	cache.Set(host, ip1)
+	time.Sleep(70 * time.Millisecond)
+	cache.Set(host, ip2)
+
+	time.Sleep(70 * time.Millisecond)
+	got := cache.Lookup(host)
+	if got == nil || !got.Equal(ip2) {
+		t.Fatalf("expected refreshed ip %v, got %v", ip2, got)
 	}
 }
 
@@ -166,5 +187,27 @@ func TestHandleMixedConn_HTTP(t *testing.T) {
 	expectedTarget := "example.com:443"
 	if target != expectedTarget {
 		t.Errorf("HTTP target mismatch: got %q, want %q", target, expectedTarget)
+	}
+}
+
+func TestHandleMixedConn_HTTPIPv6HostNoPort(t *testing.T) {
+	reqStr := "CONNECT [2001:db8::1] HTTP/1.1\r\nHost: [2001:db8::1]\r\n\r\n"
+	conn := NewMockConn([]byte(reqStr))
+	cfg := &config.Config{ProxyMode: "global"}
+	table := sudoku.NewTable("key", "prefer_entropy")
+
+	var target string
+	dialer := &MockDialer{
+		DialFunc: func(destAddrStr string) (net.Conn, error) {
+			target = destAddrStr
+			return NewMockConn(nil), nil
+		},
+	}
+
+	handleMixedConn(conn, cfg, table, nil, dialer)
+
+	expectedTarget := "[2001:db8::1]:443"
+	if target != expectedTarget {
+		t.Errorf("HTTP IPv6 target mismatch: got %q, want %q", target, expectedTarget)
 	}
 }
