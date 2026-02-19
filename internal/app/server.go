@@ -13,15 +13,17 @@ import (
 	"github.com/saba-futai/sudoku/internal/protocol"
 	"github.com/saba-futai/sudoku/internal/reverse"
 	"github.com/saba-futai/sudoku/internal/tunnel"
+	"github.com/saba-futai/sudoku/pkg/logx"
 	"github.com/saba-futai/sudoku/pkg/obfs/httpmask"
 	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
 )
 
 func RunServer(cfg *config.Config, tables []*sudoku.Table) {
+	logx.InstallStd()
 	// 1. 监听 TCP 端口
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.LocalPort))
 	if err != nil {
-		log.Fatal(err)
+		logx.Fatalf("Server", "%v", err)
 	}
 	log.Printf("Server on :%d (Fallback: %s)", cfg.LocalPort, cfg.FallbackAddr)
 

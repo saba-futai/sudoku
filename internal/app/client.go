@@ -78,21 +78,22 @@ func normalizeClientKey(cfg *config.Config) ([]byte, bool, error) {
 }
 
 func RunClient(cfg *config.Config, tables []*sudoku.Table) {
+	logx.InstallStd()
 	var dialer tunnel.Dialer
 
 	privateKeyBytes, changed, err := normalizeClientKey(cfg)
 	if err != nil {
-		log.Fatalf("Failed to process key: %v", err)
+		logx.Fatalf("Client", "Failed to process key: %v", err)
 	}
 	if changed {
-		log.Printf("Derived Public Key: %s", cfg.Key)
+		logx.Infof("Init", "Derived Public Key: %s", cfg.Key)
 	}
 
 	if tables == nil || len(tables) == 0 || changed {
 		var err error
 		tables, err = BuildTables(cfg)
 		if err != nil {
-			log.Fatalf("Failed to build table(s): %v", err)
+			logx.Fatalf("Init", "Failed to build table(s): %v", err)
 		}
 	}
 
@@ -104,7 +105,7 @@ func RunClient(cfg *config.Config, tables []*sudoku.Table) {
 
 	if cfg.HTTPMaskSessionMuxEnabled() {
 		dialer = &tunnel.MuxDialer{BaseDialer: baseDialer}
-		log.Printf("Enabled HTTPMask session mux (single tunnel, multi-target)")
+		logx.Infof("Init", "Enabled HTTPMask session mux (single tunnel, multi-target)")
 	} else {
 		dialer = &tunnel.AdaptiveDialer{
 			BaseDialer: baseDialer,
@@ -120,9 +121,9 @@ func RunClient(cfg *config.Config, tables []*sudoku.Table) {
 
 	l, err := net.Listen("tcp", fmt.Sprintf(":%d", cfg.LocalPort))
 	if err != nil {
-		log.Fatal(err)
+		logx.Fatalf("Client", "%v", err)
 	}
-	log.Printf("Client (Mixed) on :%d -> %s | Mode: %s | Rules: %d",
+	logx.Infof("Client", "Client (Mixed) on :%d -> %s | Mode: %s | Rules: %d",
 		cfg.LocalPort, cfg.ServerAddress, cfg.ProxyMode, len(cfg.RuleURLs))
 
 	var primaryTable *sudoku.Table

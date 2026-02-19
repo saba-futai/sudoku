@@ -2,14 +2,13 @@ package main
 
 import (
 	"flag"
-	"fmt"
-	"log"
 	"os"
 
 	"github.com/saba-futai/sudoku/internal/app"
 	"github.com/saba-futai/sudoku/internal/config"
 	"github.com/saba-futai/sudoku/internal/reverse"
 	"github.com/saba-futai/sudoku/pkg/crypto"
+	"github.com/saba-futai/sudoku/pkg/logx"
 )
 
 var (
@@ -29,13 +28,14 @@ var (
 
 func main() {
 	flag.Parse()
+	logx.InstallStd()
 
 	if *revDial != "" || *revListen != "" {
 		if *revDial == "" || *revListen == "" {
-			log.Fatalf("reverse forwarder requires both -rev-dial and -rev-listen")
+			logx.Fatalf("CLI", "reverse forwarder requires both -rev-dial and -rev-listen")
 		}
 		if err := reverse.ServeLocalWSForward(*revListen, *revDial, *revInsecure); err != nil {
-			log.Fatal(err)
+			logx.Fatalf("CLI", "%v", err)
 		}
 		return
 	}
@@ -44,41 +44,41 @@ func main() {
 		if *more != "" {
 			x, err := crypto.ParsePrivateScalar(*more)
 			if err != nil {
-				log.Fatalf("Invalid private key: %v", err)
+				logx.Fatalf("CLI", "Invalid private key: %v", err)
 			}
 
 			// 2. Generate new split key
 			splitKey, err := crypto.SplitPrivateKey(x)
 			if err != nil {
-				log.Fatalf("Failed to split key: %v", err)
+				logx.Fatalf("CLI", "Failed to split key: %v", err)
 			}
-			fmt.Printf("Split Private Key: %s\n", splitKey)
+			logx.Infof("CLI", "Split Private Key: %s", splitKey)
 			return
 		}
 
 		// Generate new Master Key
 		pair, err := crypto.GenerateMasterKey()
 		if err != nil {
-			log.Fatalf("Failed to generate key: %v", err)
+			logx.Fatalf("CLI", "Failed to generate key: %v", err)
 		}
 		splitKey, err := crypto.SplitPrivateKey(pair.Private)
 		if err != nil {
-			log.Fatalf("Failed to generate key: %v", err)
+			logx.Fatalf("CLI", "Failed to generate key: %v", err)
 		}
-		fmt.Printf("Available Private Key: %s\n", splitKey)
-		fmt.Printf("Master Private Key: %s\n", crypto.EncodeScalar(pair.Private))
-		fmt.Printf("Master Public Key:  %s\n", crypto.EncodePoint(pair.Public))
+		logx.Infof("CLI", "Available Private Key: %s", splitKey)
+		logx.Infof("CLI", "Master Private Key: %s", crypto.EncodeScalar(pair.Private))
+		logx.Infof("CLI", "Master Public Key:  %s", crypto.EncodePoint(pair.Public))
 		return
 	}
 
 	if *linkInput != "" {
 		cfg, err := config.BuildConfigFromShortLink(*linkInput)
 		if err != nil {
-			log.Fatalf("Failed to parse short link: %v", err)
+			logx.Fatalf("CLI", "Failed to parse short link: %v", err)
 		}
 		tables, err := app.BuildTables(cfg)
 		if err != nil {
-			log.Fatalf("Failed to build table: %v", err)
+			logx.Fatalf("CLI", "Failed to build table: %v", err)
 		}
 		app.RunClient(cfg, tables)
 		return
@@ -87,15 +87,15 @@ func main() {
 	if *setupWizard {
 		result, err := app.RunSetupWizard(*configPath, *publicHost)
 		if err != nil {
-			log.Fatalf("Setup failed: %v", err)
+			logx.Fatalf("CLI", "Setup failed: %v", err)
 		}
-		fmt.Printf("Server config saved to %s\n", result.ServerConfigPath)
-		fmt.Printf("Client config saved to %s\n", result.ClientConfigPath)
-		fmt.Printf("Short link: %s\n", result.ShortLink)
+		logx.Infof("CLI", "Server config saved to %s", result.ServerConfigPath)
+		logx.Infof("CLI", "Client config saved to %s", result.ClientConfigPath)
+		logx.Infof("CLI", "Short link: %s", result.ShortLink)
 
 		tables, err := app.BuildTables(result.ServerConfig)
 		if err != nil {
-			log.Fatalf("Failed to build table: %v", err)
+			logx.Fatalf("CLI", "Failed to build table: %v", err)
 		}
 		app.RunServer(result.ServerConfig, tables)
 		return
@@ -103,14 +103,14 @@ func main() {
 
 	cfg, err := config.Load(*configPath)
 	if err != nil {
-		log.Fatalf("Failed to load config from %s: %v", *configPath, err)
+		logx.Fatalf("CLI", "Failed to load config from %s: %v", *configPath, err)
 	}
 
 	if *testConfig {
-		fmt.Printf("Configuration %s is valid.\n", *configPath)
-		fmt.Printf("Mode: %s\n", cfg.Mode)
+		logx.Infof("CLI", "Configuration %s is valid.", *configPath)
+		logx.Infof("CLI", "Mode: %s", cfg.Mode)
 		if cfg.Mode == "client" {
-			fmt.Printf("Rules: %d URLs configured\n", len(cfg.RuleURLs))
+			logx.Infof("CLI", "Rules: %d URLs configured", len(cfg.RuleURLs))
 		}
 		os.Exit(0)
 	}
@@ -118,15 +118,15 @@ func main() {
 	if *exportLink {
 		link, err := config.BuildShortLinkFromConfig(cfg, *publicHost)
 		if err != nil {
-			log.Fatalf("Export short link failed: %v", err)
+			logx.Fatalf("CLI", "Export short link failed: %v", err)
 		}
-		fmt.Printf("Short link: %s\n", link)
+		logx.Infof("CLI", "Short link: %s", link)
 		os.Exit(0)
 	}
 
 	tables, err := app.BuildTables(cfg)
 	if err != nil {
-		log.Fatalf("Failed to build table: %v", err)
+		logx.Fatalf("CLI", "Failed to build table: %v", err)
 	}
 
 	if cfg.Mode == "client" {

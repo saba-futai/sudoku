@@ -9,6 +9,7 @@ import (
 
 	"github.com/saba-futai/sudoku/internal/config"
 	"github.com/saba-futai/sudoku/pkg/crypto"
+	"github.com/saba-futai/sudoku/pkg/logx"
 )
 
 // WizardResult aggregates outputs from the interactive setup.
@@ -48,6 +49,7 @@ type wizardInput struct {
 
 // RunSetupWizard builds server/client configs interactively and exports a short link.
 func RunSetupWizard(defaultServerPath, publicHost string) (*WizardResult, error) {
+	logx.InstallStd()
 	if input, ok, err := runSetupWizardTUI(defaultServerPath, publicHost); ok {
 		if err != nil {
 			return nil, err
@@ -65,7 +67,7 @@ func RunSetupWizard(defaultServerPath, publicHost string) (*WizardResult, error)
 func runSetupWizardPrompt(defaultServerPath, publicHost string) (wizardInput, error) {
 	reader := bufio.NewReader(os.Stdin)
 
-	fmt.Println("== Sudoku Setup (fallback prompt mode) ==")
+	logx.Infof("Setup", "Sudoku Setup (fallback prompt mode)")
 	host := promptString(reader, "Server public host/IP", publicHost, "127.0.0.1")
 	serverPort := promptInt(reader, "Server port", 8080)
 	mixPort := promptInt(reader, "Client mixed proxy port", 1080)
@@ -159,7 +161,7 @@ func finalizeWizard(in wizardInput) (*WizardResult, error) {
 
 	enablePureDownlink := in.EnablePureDown
 	if !enablePureDownlink && aead == "none" {
-		fmt.Println("Bandwidth-optimized downlink requires AEAD. Forcing chacha20-poly1305.")
+		logx.Warnf("Setup", "Bandwidth-optimized downlink requires AEAD. Forcing chacha20-poly1305.")
 		aead = "chacha20-poly1305"
 	}
 
@@ -171,7 +173,7 @@ func finalizeWizard(in wizardInput) (*WizardResult, error) {
 			return nil, fmt.Errorf("generate key failed: %w", err)
 		}
 		key = crypto.EncodePoint(pair.Public)
-		fmt.Printf("Generated shared key: %s\n", key)
+		logx.Infof("Setup", "Generated shared key: %s", key)
 	}
 
 	httpMaskMode := strings.ToLower(strings.TrimSpace(in.HTTPMaskMode))
