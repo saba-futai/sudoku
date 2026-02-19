@@ -1,12 +1,12 @@
 package app
 
 import (
-	"log"
 	"time"
 
 	"github.com/saba-futai/sudoku/internal/config"
 	"github.com/saba-futai/sudoku/internal/reverse"
 	"github.com/saba-futai/sudoku/internal/tunnel"
+	"github.com/saba-futai/sudoku/pkg/logx"
 )
 
 func startReverseClient(cfg *config.Config, baseDialer *tunnel.BaseDialer) {
@@ -14,7 +14,7 @@ func startReverseClient(cfg *config.Config, baseDialer *tunnel.BaseDialer) {
 		return
 	}
 	if baseDialer == nil {
-		log.Printf("[Reverse] disabled: missing dialer")
+		logx.Warnf("Reverse", "disabled: missing dialer")
 		return
 	}
 
@@ -31,7 +31,7 @@ func startReverseClient(cfg *config.Config, baseDialer *tunnel.BaseDialer) {
 		for {
 			conn, err := baseDialer.DialBase()
 			if err != nil {
-				log.Printf("[Reverse] dial base failed: %v", err)
+				logx.Warnf("Reverse", "dial base failed: %v", err)
 				time.Sleep(backoff)
 				backoff *= 2
 				if backoff > maxBackoff {
@@ -44,9 +44,9 @@ func startReverseClient(cfg *config.Config, baseDialer *tunnel.BaseDialer) {
 			err = reverse.ServeClientSession(conn, clientID, routes)
 			_ = conn.Close()
 			if err != nil {
-				log.Printf("[Reverse] session ended: %v", err)
+				logx.Warnf("Reverse", "session ended: %v", err)
 			} else {
-				log.Printf("[Reverse] session ended")
+				logx.Infof("Reverse", "session ended")
 			}
 			time.Sleep(backoff)
 		}

@@ -5,7 +5,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"sort"
@@ -13,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/saba-futai/sudoku/pkg/logx"
 	"gopkg.in/yaml.v3"
 )
 
@@ -93,7 +93,7 @@ func GetInstance(urls []string) *Manager {
 }
 
 func (m *Manager) Update() {
-	log.Printf("[GeoData] Updating rules from %d sources...", len(m.urls))
+	logx.Infof("GeoData", "Updating rules from %d sources...", len(m.urls))
 
 	state := &ruleBuildState{
 		exact:  make(map[string]struct{}),
@@ -115,7 +115,7 @@ func (m *Manager) Update() {
 	m.domainSuffix = state.suffix
 	m.mu.Unlock()
 
-	log.Printf("[GeoData] Rules Updated: %d IPv4 Ranges, %d IPv6 Ranges, %d Domains, %d Suffixes",
+	logx.Infof("GeoData", "Rules Updated: %d IPv4 Ranges, %d IPv6 Ranges, %d Domains, %d Suffixes",
 		len(mergedIPs), len(mergedIPv6), len(state.exact), len(state.suffix))
 }
 
@@ -123,7 +123,7 @@ func (m *Manager) downloadAndParse(url string, state *ruleBuildState) {
 	client := http.Client{Timeout: 30 * time.Second}
 	resp, err := client.Get(url)
 	if err != nil {
-		log.Printf("[GeoData] Failed to download %s: %v", url, err)
+		logx.Warnf("GeoData", "Failed to download %s: %v", url, err)
 		return
 	}
 	defer resp.Body.Close()
@@ -131,7 +131,7 @@ func (m *Manager) downloadAndParse(url string, state *ruleBuildState) {
 	// 读取全部内容
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
-		log.Printf("[GeoData] Failed to read body from %s: %v", url, err)
+		logx.Warnf("GeoData", "Failed to read body from %s: %v", url, err)
 		return
 	}
 

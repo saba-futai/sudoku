@@ -4,9 +4,10 @@ import (
 	"crypto/sha256"
 	"encoding/binary"
 	"errors"
-	"log"
 	"math/rand"
 	"time"
+
+	"github.com/saba-futai/sudoku/pkg/logx"
 )
 
 var (
@@ -26,7 +27,7 @@ type Table struct {
 func NewTable(key string, mode string) *Table {
 	t, err := NewTableWithCustom(key, mode, "")
 	if err != nil {
-		log.Panicf("failed to build table: %v", err)
+		logx.Panicf("Init", "failed to build table: %v", err)
 	}
 	return t
 }
@@ -83,7 +84,7 @@ func NewTableWithCustom(key string, mode string, customPattern string) (*Table, 
 			t.DecodeMap[key] = byte(byteVal)
 		}
 	}
-	log.Printf("[Init] Sudoku Tables initialized (%s) in %v", layout.name, time.Since(start))
+	logx.Infof("Init", "Sudoku Tables initialized (%s) in %v", layout.name, time.Since(start))
 	return t, nil
 }
 

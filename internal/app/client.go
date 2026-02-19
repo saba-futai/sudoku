@@ -8,7 +8,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"net/http"
 	"strings"
@@ -234,7 +233,7 @@ func handleSocks5UDPAssociate(ctrl net.Conn, cfg *config.Config, dialer tunnel.D
 		return
 	}
 
-	log.Printf("[SOCKS5][UDP] Associate ready on %s -> %s", udpConn.LocalAddr().String(), cfg.ServerAddress)
+	logx.Infof("SOCKS5/UDP", "Associate ready on %s -> %s", udpConn.LocalAddr().String(), cfg.ServerAddress)
 	session := newUoTClientSession(ctrl, udpConn, uotConn)
 	session.run()
 }
@@ -672,7 +671,7 @@ func dialTarget(network string, src net.Addr, destAddrStr string, destIP net.IP,
 	if shouldProxy {
 		conn, err := dialer.Dial(destAddrStr)
 		if err != nil {
-			log.Printf("[Proxy] Dial Failed: %v", err)
+			logx.Warnf("Proxy", "Dial Failed: %v", err)
 			return nil, false
 		}
 		return conn, true
@@ -684,7 +683,7 @@ func dialTarget(network string, src net.Addr, destAddrStr string, destIP net.IP,
 			dConn, err = directDial("tcp", destAddrStr, 5*time.Second)
 		}
 		if err != nil {
-			log.Printf("[Direct] Dial Failed: %v", err)
+			logx.Warnf("Direct", "Dial Failed: %v", err)
 			return nil, false
 		}
 	}

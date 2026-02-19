@@ -5,7 +5,6 @@ import (
 	"crypto/tls"
 	"errors"
 	"fmt"
-	"log"
 	"net"
 	"net/http"
 	"net/url"
@@ -14,6 +13,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/saba-futai/sudoku/internal/tunnel"
+	"github.com/saba-futai/sudoku/pkg/logx"
 )
 
 // ServeLocalWSForward listens on listenAddr and forwards each accepted TCP connection through
@@ -48,7 +48,7 @@ func ServeLocalWSForward(listenAddr, dialURL string, insecure bool) error {
 	}
 	defer ln.Close()
 
-	log.Printf("[Reverse][Forward] TCP %s -> %s", ln.Addr().String(), dialURL)
+	logx.Infof("Reverse/Forward", "TCP %s -> %s", ln.Addr().String(), dialURL)
 
 	var wsHTTPClient *http.Client
 	if insecure && strings.EqualFold(u.Scheme, "wss") {
@@ -81,12 +81,12 @@ func ServeLocalWSForward(listenAddr, dialURL string, insecure bool) error {
 			})
 			cancel()
 			if err != nil {
-				log.Printf("[Reverse][Forward] dial ws failed: %v", err)
+				logx.Warnf("Reverse/Forward", "dial ws failed: %v", err)
 				return
 			}
 			if ws.Subprotocol() != sudokuTCPSubprotocol {
 				_ = ws.Close(websocket.StatusPolicyViolation, "subprotocol required")
-				log.Printf("[Reverse][Forward] server did not accept subprotocol %q", sudokuTCPSubprotocol)
+				logx.Warnf("Reverse/Forward", "server did not accept subprotocol %q", sudokuTCPSubprotocol)
 				return
 			}
 

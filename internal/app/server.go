@@ -3,7 +3,6 @@ package app
 import (
 	"fmt"
 	"io"
-	"log"
 	"net"
 	"strings"
 	"time"
@@ -25,16 +24,16 @@ func RunServer(cfg *config.Config, tables []*sudoku.Table) {
 	if err != nil {
 		logx.Fatalf("Server", "%v", err)
 	}
-	log.Printf("Server on :%d (Fallback: %s)", cfg.LocalPort, cfg.FallbackAddr)
+	logx.Infof("Server", "Server on :%d (Fallback: %s)", cfg.LocalPort, cfg.FallbackAddr)
 
 	var revMgr *reverse.Manager
 	if cfg.Reverse != nil && strings.TrimSpace(cfg.Reverse.Listen) != "" {
 		revMgr = reverse.NewManager()
 		revListen := strings.TrimSpace(cfg.Reverse.Listen)
 		go func() {
-			log.Printf("[Reverse] entry on %s", revListen)
+			logx.Infof("Reverse", "entry on %s", revListen)
 			if err := reverse.ServeEntry(revListen, revMgr); err != nil {
-				log.Printf("[Reverse] entry error: %v", err)
+				logx.Warnf("Reverse", "entry error: %v", err)
 			}
 		}()
 	}
@@ -67,7 +66,7 @@ func handleServerConn(rawConn net.Conn, cfg *config.Config, tables []*sudoku.Tab
 	if tunnelSrv != nil {
 		res, c, err := tunnelSrv.HandleConn(rawConn)
 		if err != nil {
-			log.Printf("[Server][HTTP] tunnel prelude failed: %v", err)
+			logx.Warnf("Server/HTTP", "tunnel prelude failed: %v", err)
 			rawConn.Close()
 			return
 		}
@@ -100,7 +99,7 @@ func handleSudokuServerConn(handshakeConn net.Conn, rawConn net.Conn, cfg *confi
 	tunnelConn, meta, err := tunnel.HandshakeAndUpgradeWithTablesMeta(handshakeConn, cfg, tables)
 	if err != nil {
 		if suspErr, ok := err.(*tunnel.SuspiciousError); ok {
-			log.Printf("[Security] Suspicious connection: %v", suspErr.Err)
+			logx.Warnf("Security", "Suspicious connection: %v", suspErr.Err)
 			// Only meaningful for direct TCP/legacy mask connections.
 			if allowFallback {
 				handler.HandleSuspicious(suspErr.Conn, rawConn, cfg)
@@ -108,7 +107,7 @@ func handleSudokuServerConn(handshakeConn net.Conn, rawConn net.Conn, cfg *confi
 				rawConn.Close()
 			}
 		} else {
-			log.Printf("[Server] Handshake failed: %v", err)
+			logx.Warnf("Server", "Handshake failed: %v", err)
 			rawConn.Close()
 		}
 		return
@@ -126,27 +125,27 @@ func handleSudokuServerConn(handshakeConn net.Conn, rawConn net.Conn, cfg *confi
 	// 判断是否为 UoT (UDP over TCP) 会话
 	firstByte := make([]byte, 1)
 	if _, err := io.ReadFull(tunnelConn, firstByte); err != nil {
-		log.Printf("[Server] Failed to read first byte: %v", err)
+		logx.Warnf("Server", "Failed to read first byte: %v", err)
 		return
 	}
 
 	if firstByte[0] == tunnel.UoTMagicByte {
 		if userHash != "" {
-			log.Printf("[Server][UoT][User:%s] session start", userHash)
+			logx.Infof("Server/UoT", "[User:%s] session start", userHash)
 		} else {
-			log.Printf("[Server][UoT] session start")
+			logx.Infof("Server/UoT", "session start")
 		}
 		if err := tunnel.HandleUoTServer(tunnelConn); err != nil {
 			if userHash != "" {
-				log.Printf("[Server][UoT][User:%s] session end: %v", userHash, err)
+				logx.Warnf("Server/UoT", "[User:%s] session end: %v", userHash, err)
 			} else {
-				log.Printf("[Server][UoT] session end: %v", err)
+				logx.Warnf("Server/UoT", "session end: %v", err)
 			}
 		} else {
 			if userHash != "" {
-				log.Printf("[Server][UoT][User:%s] session end", userHash)
+				logx.Infof("Server/UoT", "[User:%s] session end", userHash)
 			} else {
-				log.Printf("[Server][UoT] session end")
+				logx.Infof("Server/UoT", "session end")
 			}
 		}
 		return
@@ -154,28 +153,28 @@ func handleSudokuServerConn(handshakeConn net.Conn, rawConn net.Conn, cfg *confi
 
 	if firstByte[0] == tunnel.MuxMagicByte {
 		if userHash != "" {
-			log.Printf("[Server][Mux][User:%s] session start", userHash)
+			logx.Infof("Server/Mux", "[User:%s] session start", userHash)
 		} else {
-			log.Printf("[Server][Mux] session start")
+			logx.Infof("Server/Mux", "session start")
 		}
 		logConnect := func(addr string) {
 			if userHash != "" {
-				log.Printf("[Server][Mux][User:%s] Connecting to %s", userHash, addr)
+				logx.Infof("Server/Mux", "[User:%s] Connecting to %s", userHash, addr)
 			} else {
-				log.Printf("[Server][Mux] Connecting to %s", addr)
+				logx.Infof("Server/Mux", "Connecting to %s", addr)
 			}
 		}
 		if err := tunnel.HandleMuxServer(tunnelConn, logConnect); err != nil {
 			if userHash != "" {
-				log.Printf("[Server][Mux][User:%s] session end: %v", userHash, err)
+				logx.Warnf("Server/Mux", "[User:%s] session end: %v", userHash, err)
 			} else {
-				log.Printf("[Server][Mux] session end: %v", err)
+				logx.Warnf("Server/Mux", "session end: %v", err)
 			}
 		} else {
 			if userHash != "" {
-				log.Printf("[Server][Mux][User:%s] session end", userHash)
+				logx.Infof("Server/Mux", "[User:%s] session end", userHash)
 			} else {
-				log.Printf("[Server][Mux] session end")
+				logx.Infof("Server/Mux", "session end")
 			}
 		}
 		return
@@ -183,25 +182,25 @@ func handleSudokuServerConn(handshakeConn net.Conn, rawConn net.Conn, cfg *confi
 
 	if firstByte[0] == tunnel.ReverseMagicByte {
 		if revMgr == nil {
-			log.Printf("[Server][Reverse] reverse proxy not enabled (missing reverse.listen)")
+			logx.Warnf("Server/Reverse", "reverse proxy not enabled (missing reverse.listen)")
 			return
 		}
 		if userHash != "" {
-			log.Printf("[Server][Reverse][User:%s] session start", userHash)
+			logx.Infof("Server/Reverse", "[User:%s] session start", userHash)
 		} else {
-			log.Printf("[Server][Reverse] session start")
+			logx.Infof("Server/Reverse", "session start")
 		}
 		if err := reverse.HandleServerSession(tunnelConn, userHash, revMgr); err != nil {
 			if userHash != "" {
-				log.Printf("[Server][Reverse][User:%s] session end: %v", userHash, err)
+				logx.Warnf("Server/Reverse", "[User:%s] session end: %v", userHash, err)
 			} else {
-				log.Printf("[Server][Reverse] session end: %v", err)
+				logx.Warnf("Server/Reverse", "session end: %v", err)
 			}
 		} else {
 			if userHash != "" {
-				log.Printf("[Server][Reverse][User:%s] session end", userHash)
+				logx.Infof("Server/Reverse", "[User:%s] session end", userHash)
 			} else {
-				log.Printf("[Server][Reverse] session end")
+				logx.Infof("Server/Reverse", "session end")
 			}
 		}
 		return
@@ -213,19 +212,19 @@ func handleSudokuServerConn(handshakeConn net.Conn, rawConn net.Conn, cfg *confi
 	// 从上行连接读取目标地址
 	destAddrStr, _, _, err := protocol.ReadAddress(prefixedConn)
 	if err != nil {
-		log.Printf("[Server] Failed to read target address: %v", err)
+		logx.Warnf("Server", "Failed to read target address: %v", err)
 		return
 	}
 
 	if userHash != "" {
-		log.Printf("[Server][User:%s] Connecting to %s", userHash, destAddrStr)
+		logx.Infof("Server", "[User:%s] Connecting to %s", userHash, destAddrStr)
 	} else {
-		log.Printf("[Server] Connecting to %s", destAddrStr)
+		logx.Infof("Server", "Connecting to %s", destAddrStr)
 	}
 
 	target, err := net.DialTimeout("tcp", destAddrStr, 10*time.Second)
 	if err != nil {
-		log.Printf("[Server] Connect target failed: %v", err)
+		logx.Warnf("Server", "Connect target failed: %v", err)
 		return
 	}
 

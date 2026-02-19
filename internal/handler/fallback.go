@@ -2,12 +2,12 @@ package handler
 
 import (
 	"io"
-	"log"
 	"net"
 	"sync"
 	"time"
 
 	"github.com/saba-futai/sudoku/internal/config"
+	"github.com/saba-futai/sudoku/pkg/logx"
 )
 
 func writeFullConn(conn net.Conn, data []byte) error {
@@ -30,7 +30,7 @@ func HandleSuspicious(wrapper net.Conn, rawConn net.Conn, cfg *config.Config) {
 	remoteAddr := rawConn.RemoteAddr().String()
 
 	if cfg.SuspiciousAction == "silent" {
-		log.Printf("[Silent] Suspicious %s. Tarpit.", remoteAddr)
+		logx.Warnf("Security", "Suspicious %s. Tarpit.", remoteAddr)
 		io.Copy(io.Discard, rawConn)
 		time.Sleep(5 * time.Second)
 		rawConn.Close()
@@ -42,7 +42,7 @@ func HandleSuspicious(wrapper net.Conn, rawConn net.Conn, cfg *config.Config) {
 		return
 	}
 
-	log.Printf("[Fallback] %s -> %s", remoteAddr, cfg.FallbackAddr)
+	logx.Warnf("Fallback", "%s -> %s", remoteAddr, cfg.FallbackAddr)
 	dst, err := net.DialTimeout("tcp", cfg.FallbackAddr, 3*time.Second)
 	if err != nil {
 		rawConn.Close()
