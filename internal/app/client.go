@@ -10,6 +10,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -667,9 +668,15 @@ func (s *uotClientSession) resolveDirectUDPAddr(ctx context.Context, destAddr st
 	if err != nil {
 		return nil, err
 	}
-	portNum, err := net.LookupPort("udp", port)
-	if err != nil {
-		return nil, err
+	portNum := 0
+	if v, convErr := strconv.Atoi(port); convErr == nil && v > 0 && v <= 65535 {
+		portNum = v
+	} else {
+		v, lookupErr := net.LookupPort("udp", port)
+		if lookupErr != nil {
+			return nil, lookupErr
+		}
+		portNum = v
 	}
 
 	if preferIP != nil {
