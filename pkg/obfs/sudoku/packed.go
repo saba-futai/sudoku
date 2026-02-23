@@ -11,13 +11,16 @@ import (
 )
 
 const (
-	// 每次从 RNG 获取批量随机数的缓存大小，减少 RNG 函数调用开销
+	// RngBatchSize controls how many random numbers to batch per RNG pull (micro-optimization).
 	RngBatchSize = 128
 )
 
-// 1. 使用 12字节->16组 的块处理优化 Write (减少循环开销)
-// 2. 使用整数阈值随机概率判断 Padding，与纯 Sudoku 保持流量特征一致
-// 3. Read 使用 copy 移动避免底层数组泄漏
+// PackedConn is a bandwidth-optimized downlink codec.
+//
+// It encodes ciphertext bits into 6-bit groups, then maps them to Sudoku "hint" bytes with optional padding
+// to keep the traffic profile consistent with the classic Sudoku codec:
+//   - Write: batch 12 bytes -> 16 groups (fast path), with the same padding probability model as Conn
+//   - Read: decode groups back to bytes, avoiding slice aliasing leaks
 type PackedConn struct {
 	net.Conn
 	table  *Table
@@ -30,12 +33,12 @@ type PackedConn struct {
 	// 写缓冲与状态
 	writeMu  sync.Mutex
 	writeBuf []byte
-	bitBuf   uint64 // 暂存的位数据
-	bitCount int    // 暂存的位数
+	bitBuf   uint64 // pending bits (MSB-first)
+	bitCount int    // number of valid pending bits in bitBuf
 
 	// 读状态
-	readBitBuf uint64
-	readBits   int
+	readBitBuf uint64 // pending bits (MSB-first)
+	readBits   int    // number of valid pending bits in readBitBuf
 
 	// 随机数与填充控制 - 使用整数阈值随机，与 Conn 一致
 	rng              *rand.Rand
@@ -84,7 +87,7 @@ func NewPackedConn(c net.Conn, table *Table, pMin, pMax int) *PackedConn {
 	return pc
 }
 
-// maybeAddPadding 内联辅助：根据概率阈值插入 padding
+// maybeAddPadding inserts a padding byte with the same probability model as Conn.
 func (pc *PackedConn) maybeAddPadding(out []byte) []byte {
 	if shouldPad(pc.rng, pc.paddingThreshold) {
 		out = append(out, pc.getPaddingByte())
@@ -92,7 +95,12 @@ func (pc *PackedConn) maybeAddPadding(out []byte) []byte {
 	return out
 }
 
-// Write 极致优化版 - 批量处理 12 字节
+func (pc *PackedConn) appendGroup(out []byte, group byte) []byte {
+	out = pc.maybeAddPadding(out)
+	return append(out, pc.encodeGroup(group))
+}
+
+// Write encodes bytes into 6-bit groups and writes the corresponding hint bytes.
 func (pc *PackedConn) Write(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
@@ -127,8 +135,7 @@ func (pc *PackedConn) Write(p []byte) (int, error) {
 			} else {
 				pc.bitBuf &= (1 << pc.bitCount) - 1
 			}
-			out = pc.maybeAddPadding(out)
-			out = append(out, pc.encodeGroup(group&0x3F))
+			out = pc.appendGroup(out, group&0x3F)
 		}
 	}
 
@@ -144,15 +151,10 @@ func (pc *PackedConn) Write(p []byte) (int, error) {
 			g3 := ((b2 & 0x0F) << 2) | ((b3 >> 6) & 0x03)
 			g4 := b3 & 0x3F
 
-			// 每个组之前都有概率插入 padding
-			out = pc.maybeAddPadding(out)
-			out = append(out, pc.encodeGroup(g1))
-			out = pc.maybeAddPadding(out)
-			out = append(out, pc.encodeGroup(g2))
-			out = pc.maybeAddPadding(out)
-			out = append(out, pc.encodeGroup(g3))
-			out = pc.maybeAddPadding(out)
-			out = append(out, pc.encodeGroup(g4))
+			out = pc.appendGroup(out, g1)
+			out = pc.appendGroup(out, g2)
+			out = pc.appendGroup(out, g3)
+			out = pc.appendGroup(out, g4)
 		}
 	}
 
@@ -166,14 +168,10 @@ func (pc *PackedConn) Write(p []byte) (int, error) {
 		g3 := ((b2 & 0x0F) << 2) | ((b3 >> 6) & 0x03)
 		g4 := b3 & 0x3F
 
-		out = pc.maybeAddPadding(out)
-		out = append(out, pc.encodeGroup(g1))
-		out = pc.maybeAddPadding(out)
-		out = append(out, pc.encodeGroup(g2))
-		out = pc.maybeAddPadding(out)
-		out = append(out, pc.encodeGroup(g3))
-		out = pc.maybeAddPadding(out)
-		out = append(out, pc.encodeGroup(g4))
+		out = pc.appendGroup(out, g1)
+		out = pc.appendGroup(out, g2)
+		out = pc.appendGroup(out, g3)
+		out = pc.appendGroup(out, g4)
 	}
 
 	// 5. 尾部处理 (Tail Path) - 处理剩余的 1 或 2 个字节
@@ -189,18 +187,16 @@ func (pc *PackedConn) Write(p []byte) (int, error) {
 			} else {
 				pc.bitBuf &= (1 << pc.bitCount) - 1
 			}
-			out = pc.maybeAddPadding(out)
-			out = append(out, pc.encodeGroup(group&0x3F))
+			out = pc.appendGroup(out, group&0x3F)
 		}
 	}
 
 	// 6. 处理残留位
 	if pc.bitCount > 0 {
-		out = pc.maybeAddPadding(out)
 		group := byte(pc.bitBuf << (6 - pc.bitCount))
 		pc.bitBuf = 0
 		pc.bitCount = 0
-		out = append(out, pc.encodeGroup(group&0x3F))
+		out = pc.appendGroup(out, group&0x3F)
 		out = append(out, pc.padMarker)
 	}
 
@@ -217,7 +213,7 @@ func (pc *PackedConn) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// Flush 处理最后不足 6 bit 的情况
+// Flush writes any residual bits left by partial writes.
 func (pc *PackedConn) Flush() error {
 	pc.writeMu.Lock()
 	defer pc.writeMu.Unlock()
@@ -243,7 +239,7 @@ func (pc *PackedConn) Flush() error {
 	return nil
 }
 
-// Read 优化版：减少切片操作，避免内存泄漏
+// Read decodes hint bytes back into the original byte stream.
 func (pc *PackedConn) Read(p []byte) (int, error) {
 	// 1. 优先返回待处理区的数据
 	if n, ok := drainPending(p, &pc.pendingData); ok {

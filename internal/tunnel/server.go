@@ -271,6 +271,17 @@ func selectTableByProbe(r *bufio.Reader, cfg *config.Config, tables []*sudoku.Ta
 		return nil, nil, fmt.Errorf("too many table candidates: %d", len(tables))
 	}
 
+	// Copy so we can prune candidates without mutating the caller slice.
+	candidates := make([]*sudoku.Table, 0, len(tables))
+	for i := range tables {
+		if tables[i] != nil {
+			candidates = append(candidates, tables[i])
+		}
+	}
+	if len(candidates) == 0 {
+		return nil, nil, fmt.Errorf("no table candidates")
+	}
+
 	probe, err := drainBuffered(r)
 	if err != nil {
 		return nil, nil, fmt.Errorf("drain buffered bytes failed: %w", err)
@@ -278,17 +289,18 @@ func selectTableByProbe(r *bufio.Reader, cfg *config.Config, tables []*sudoku.Ta
 
 	tmp := make([]byte, readChunk)
 	for {
-		if len(tables) == 1 {
+		if len(candidates) == 1 {
 			tail, err := drainBuffered(r)
 			if err != nil {
 				return nil, nil, fmt.Errorf("drain buffered bytes failed: %w", err)
 			}
 			probe = append(probe, tail...)
-			return tables[0], probe, nil
+			return candidates[0], probe, nil
 		}
 
 		needMore := false
-		for _, table := range tables {
+		nextCandidates := candidates[:0]
+		for _, table := range candidates {
 			err := probeHandshakeBytes(probe, cfg, table)
 			if err == nil {
 				tail, err := drainBuffered(r)
@@ -300,10 +312,14 @@ func selectTableByProbe(r *bufio.Reader, cfg *config.Config, tables []*sudoku.Ta
 			}
 			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
 				needMore = true
+				nextCandidates = append(nextCandidates, table)
+				continue
 			}
+			// Definitive mismatch: drop this table to avoid O(n*m) probing as the probe grows.
 		}
+		candidates = nextCandidates
 
-		if !needMore {
+		if len(candidates) == 0 || !needMore {
 			return nil, probe, fmt.Errorf("handshake table selection failed")
 		}
 		if len(probe) >= maxProbeBytes {
@@ -330,47 +346,29 @@ func HandshakeAndUpgradeWithTables(rawConn net.Conn, cfg *config.Config, tables 
 // HandshakeAndUpgradeWithTablesMeta is like HandshakeAndUpgradeWithTables but also returns handshake metadata
 // that can be used for multi-user accounting (e.g., per-split-private-key identification).
 func HandshakeAndUpgradeWithTablesMeta(rawConn net.Conn, cfg *config.Config, tables []*sudoku.Table) (net.Conn, *HandshakeMeta, error) {
-	// 0. HTTP Header Check
-	bufReader := bufio.NewReader(rawConn)
-	rawConn.SetReadDeadline(time.Now().Add(HandshakeTimeout))
-
-	shouldConsumeMask := false
-	var httpHeaderData []byte
-
-	if !cfg.HTTPMask.Disable {
-		peekBytes, _ := bufReader.Peek(4) // Ignore error; if peek fails, let subsequent read handle it.
-		if httpmask.LooksLikeHTTPRequestStart(peekBytes) {
-			shouldConsumeMask = true
-		}
+	if rawConn == nil {
+		return nil, nil, fmt.Errorf("nil conn")
+	}
+	if cfg == nil {
+		return nil, nil, fmt.Errorf("nil config")
 	}
 
-	if shouldConsumeMask {
-		consumed, err := httpmask.ConsumeHeader(bufReader)
-		httpHeaderData = consumed
-		if err != nil {
-			rawConn.SetReadDeadline(time.Time{})
-			// Return rawConn wrapped in BufferedConn so caller can handle fallback.
-			recorder := new(bytes.Buffer)
-			if len(consumed) > 0 {
-				recorder.Write(consumed)
-			}
-			badConn := &BufferedConn{
-				Conn:     rawConn,
-				r:        bufReader,
-				recorder: recorder,
-			}
-			return nil, nil, &SuspiciousError{Err: fmt.Errorf("invalid http header: %w", err), Conn: badConn}
-		}
+	// 0) Byte-level prelude handling (legacy HTTP mask + buffered probe bytes).
+	bufReader := bufio.NewReader(rawConn)
+	_ = rawConn.SetReadDeadline(time.Now().Add(HandshakeTimeout))
+	defer func() { _ = rawConn.SetReadDeadline(time.Time{}) }()
+
+	httpHeaderData, susp := maybeConsumeLegacyHTTPMask(rawConn, bufReader, cfg)
+	if susp != nil {
+		return nil, nil, susp
 	}
 
 	// 1. Sudoku Layer
 	if !cfg.EnablePureDownlink && cfg.AEAD == "none" {
-		rawConn.SetReadDeadline(time.Time{})
 		return nil, nil, fmt.Errorf("enable_pure_downlink=false requires AEAD")
 	}
 
 	selectedTable, preRead, err := selectTableByProbe(bufReader, cfg, tables)
-	rawConn.SetReadDeadline(time.Time{})
 	if err != nil {
 		combined := make([]byte, 0, len(httpHeaderData)+len(preRead))
 		combined = append(combined, httpHeaderData...)
@@ -389,16 +387,14 @@ func HandshakeAndUpgradeWithTablesMeta(rawConn net.Conn, cfg *config.Config, tab
 
 	// 3. Handshake
 	handshakeBuf := make([]byte, 16)
-	rawConn.SetReadDeadline(time.Now().Add(HandshakeTimeout))
+	_ = rawConn.SetReadDeadline(time.Now().Add(HandshakeTimeout))
 	_, err = io.ReadFull(cConn, handshakeBuf)
 	if err != nil {
-		rawConn.SetReadDeadline(time.Time{})
 		return nil, nil, &SuspiciousError{Err: fmt.Errorf("handshake read failed: %w", err), Conn: &prefixedRecorderConn{Conn: sConn, prefix: httpHeaderData}}
 	}
 
 	ts := int64(binary.BigEndian.Uint64(handshakeBuf[:8]))
 	if connutil.AbsInt64(time.Now().Unix()-ts) > 60 {
-		rawConn.SetReadDeadline(time.Time{})
 		return nil, nil, &SuspiciousError{Err: fmt.Errorf("time skew/replay"), Conn: &prefixedRecorderConn{Conn: sConn, prefix: httpHeaderData}}
 	}
 	meta := &HandshakeMeta{UserHash: userHashFromHandshake(handshakeBuf)}
@@ -406,14 +402,40 @@ func HandshakeAndUpgradeWithTablesMeta(rawConn net.Conn, cfg *config.Config, tab
 	// 4. Downlink mode negotiation
 	modeBuf := make([]byte, 1)
 	if _, err := io.ReadFull(cConn, modeBuf); err != nil {
-		rawConn.SetReadDeadline(time.Time{})
 		return nil, nil, &SuspiciousError{Err: fmt.Errorf("read downlink mode failed: %w", err), Conn: &prefixedRecorderConn{Conn: sConn, prefix: httpHeaderData}}
 	}
-	rawConn.SetReadDeadline(time.Time{})
 	if modeBuf[0] != downlinkModeByte(cfg) {
 		return nil, nil, &SuspiciousError{Err: fmt.Errorf("downlink mode mismatch: client=%d server=%d", modeBuf[0], downlinkModeByte(cfg)), Conn: &prefixedRecorderConn{Conn: sConn, prefix: httpHeaderData}}
 	}
 
 	sConn.StopRecording()
 	return cConn, meta, nil
+}
+
+func maybeConsumeLegacyHTTPMask(rawConn net.Conn, r *bufio.Reader, cfg *config.Config) ([]byte, *SuspiciousError) {
+	if rawConn == nil || r == nil || cfg == nil || cfg.HTTPMask.Disable {
+		return nil, nil
+	}
+
+	peekBytes, _ := r.Peek(4) // Ignore error; if peek fails, let subsequent read handle it.
+	if !httpmask.LooksLikeHTTPRequestStart(peekBytes) {
+		return nil, nil
+	}
+
+	consumed, err := httpmask.ConsumeHeader(r)
+	if err == nil {
+		return consumed, nil
+	}
+
+	// Return rawConn wrapped in BufferedConn so caller can handle fallback.
+	recorder := new(bytes.Buffer)
+	if len(consumed) > 0 {
+		recorder.Write(consumed)
+	}
+	badConn := &BufferedConn{
+		Conn:     rawConn,
+		r:        r,
+		recorder: recorder,
+	}
+	return consumed, &SuspiciousError{Err: fmt.Errorf("invalid http header: %w", err), Conn: badConn}
 }

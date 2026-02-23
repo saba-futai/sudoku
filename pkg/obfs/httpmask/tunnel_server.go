@@ -95,6 +95,21 @@ func (s *TunnelServer) HandleConn(rawConn net.Conn) (HandleResult, net.Conn, err
 		return HandleDone, nil, errors.New("nil conn")
 	}
 
+	passThrough := func(prefix []byte) (HandleResult, net.Conn, error) {
+		return HandlePassThrough, newPreBufferedConn(rawConn, prefix), nil
+	}
+	passThroughRejected := func(prefix []byte) (HandleResult, net.Conn, error) {
+		return HandlePassThrough, newRejectedPreBufferedConn(rawConn, prefix), nil
+	}
+	rejectOr404 := func(prefix []byte) (HandleResult, net.Conn, error) {
+		if s.passThroughOnReject {
+			return passThroughRejected(prefix)
+		}
+		_ = writeSimpleHTTPResponse(rawConn, http.StatusNotFound, "not found")
+		_ = rawConn.Close()
+		return HandleDone, nil, nil
+	}
+
 	// Small header read deadline to avoid stalling Accept loops. The actual Sudoku handshake has its own deadlines.
 	_ = rawConn.SetReadDeadline(time.Now().Add(5 * time.Second))
 	var first [4]byte
@@ -103,7 +118,7 @@ func (s *TunnelServer) HandleConn(rawConn net.Conn) (HandleResult, net.Conn, err
 		_ = rawConn.SetReadDeadline(time.Time{})
 		// Even if short-read, preserve bytes for downstream handlers.
 		if n > 0 {
-			return HandlePassThrough, newPreBufferedConn(rawConn, first[:n]), nil
+			return passThrough(first[:n])
 		}
 		return HandleDone, nil, err
 	}
@@ -119,94 +134,89 @@ func (s *TunnelServer) HandleConn(rawConn net.Conn) (HandleResult, net.Conn, err
 	_ = rawConn.SetReadDeadline(time.Time{})
 	if err != nil {
 		// Not a valid HTTP request; hand it back to the legacy path with replay.
-		prefix := make([]byte, 0, len(first)+len(headerBytes)+len(buffered))
-		if len(headerBytes) == 0 || !bytes.HasPrefix(headerBytes, first[:]) {
-			prefix = append(prefix, first[:]...)
-		}
-		prefix = append(prefix, headerBytes...)
-		prefix = append(prefix, buffered...)
-		return HandlePassThrough, newPreBufferedConn(rawConn, prefix), nil
+		return passThrough(buildInvalidHTTPReplayPrefix(first[:], headerBytes, buffered))
 	}
 
-	tunnelHeader := strings.ToLower(strings.TrimSpace(req.headers["x-sudoku-tunnel"]))
+	replayPrefix := buildHTTPReplayPrefix(headerBytes, buffered)
+
+	tunnelHeader := TunnelMode(strings.ToLower(strings.TrimSpace(req.headers["x-sudoku-tunnel"])))
 	if tunnelHeader == "" {
 		// Some CDNs / forward proxies may strip unknown headers. When AuthKey is enabled, we can
 		// safely infer the intended tunnel mode by verifying the Authorization token against
 		// both stream/poll modes and picking the one that matches.
-		if s.auth != nil {
-			u, err := url.ParseRequestURI(req.target)
-			if err == nil {
-				path, ok := stripPathRoot(s.pathRoot, u.Path)
-				if ok && s.isAllowedBasePath(path) {
-					authVal := req.headers["authorization"]
-					if authVal == "" {
-						authVal = u.Query().Get(tunnelAuthQueryKey)
-					}
-					streamOK := s.auth.verifyValue(authVal, TunnelModeStream, req.method, path, time.Now())
-					pollOK := s.auth.verifyValue(authVal, TunnelModePoll, req.method, path, time.Now())
-					switch {
-					case streamOK && !pollOK:
-						tunnelHeader = string(TunnelModeStream)
-					case pollOK && !streamOK:
-						tunnelHeader = string(TunnelModePoll)
-					}
-				}
-			}
-		}
-
+		tunnelHeader = s.inferTunnelModeFromAuth(req)
 		if tunnelHeader == "" {
 			// Not our tunnel; replay full bytes to legacy handler.
-			prefix := make([]byte, 0, len(headerBytes)+len(buffered))
-			prefix = append(prefix, headerBytes...)
-			prefix = append(prefix, buffered...)
-			return HandlePassThrough, newPreBufferedConn(rawConn, prefix), nil
+			return passThrough(replayPrefix)
 		}
-	}
-
-	reject := func() (HandleResult, net.Conn, error) {
-		prefix := make([]byte, 0, len(headerBytes)+len(buffered))
-		prefix = append(prefix, headerBytes...)
-		prefix = append(prefix, buffered...)
-		return HandlePassThrough, newRejectedPreBufferedConn(rawConn, prefix), nil
 	}
 
 	if s.mode == TunnelModeLegacy {
-		if s.passThroughOnReject {
-			return reject()
-		}
-		_ = writeSimpleHTTPResponse(rawConn, http.StatusNotFound, "not found")
-		_ = rawConn.Close()
-		return HandleDone, nil, nil
+		return rejectOr404(replayPrefix)
 	}
 
-	switch TunnelMode(tunnelHeader) {
+	switch tunnelHeader {
 	case TunnelModeStream:
 		if s.mode != TunnelModeStream && s.mode != TunnelModeAuto {
-			if s.passThroughOnReject {
-				return reject()
-			}
-			_ = writeSimpleHTTPResponse(rawConn, http.StatusNotFound, "not found")
-			_ = rawConn.Close()
-			return HandleDone, nil, nil
+			return rejectOr404(replayPrefix)
 		}
 		return s.handleStream(rawConn, req, headerBytes, buffered)
 	case TunnelModePoll:
 		if s.mode != TunnelModePoll && s.mode != TunnelModeAuto {
-			if s.passThroughOnReject {
-				return reject()
-			}
-			_ = writeSimpleHTTPResponse(rawConn, http.StatusNotFound, "not found")
-			_ = rawConn.Close()
-			return HandleDone, nil, nil
+			return rejectOr404(replayPrefix)
 		}
 		return s.handlePoll(rawConn, req, headerBytes, buffered)
 	default:
-		if s.passThroughOnReject {
-			return reject()
-		}
-		_ = writeSimpleHTTPResponse(rawConn, http.StatusNotFound, "not found")
-		_ = rawConn.Close()
-		return HandleDone, nil, nil
+		return rejectOr404(replayPrefix)
+	}
+}
+
+func buildHTTPReplayPrefix(headerBytes, buffered []byte) []byte {
+	out := make([]byte, 0, len(headerBytes)+len(buffered))
+	out = append(out, headerBytes...)
+	out = append(out, buffered...)
+	return out
+}
+
+func buildInvalidHTTPReplayPrefix(first, headerBytes, buffered []byte) []byte {
+	// readHTTPHeader may have consumed some bytes that don't include our initial 4-byte peek
+	// (e.g. parse errors / short reads). Preserve a correct replay prefix for downstream handlers.
+	out := make([]byte, 0, len(first)+len(headerBytes)+len(buffered))
+	if len(headerBytes) == 0 || !bytes.HasPrefix(headerBytes, first) {
+		out = append(out, first...)
+	}
+	out = append(out, headerBytes...)
+	out = append(out, buffered...)
+	return out
+}
+
+func (s *TunnelServer) inferTunnelModeFromAuth(req *httpRequestHeader) TunnelMode {
+	if s == nil || s.auth == nil || req == nil {
+		return ""
+	}
+	u, err := url.ParseRequestURI(req.target)
+	if err != nil || u == nil {
+		return ""
+	}
+	p, ok := stripPathRoot(s.pathRoot, u.Path)
+	if !ok || !s.isAllowedBasePath(p) {
+		return ""
+	}
+
+	authVal := req.headers["authorization"]
+	if authVal == "" {
+		authVal = u.Query().Get(tunnelAuthQueryKey)
+	}
+	now := time.Now()
+	streamOK := s.auth.verifyValue(authVal, TunnelModeStream, req.method, p, now)
+	pollOK := s.auth.verifyValue(authVal, TunnelModePoll, req.method, p, now)
+	switch {
+	case streamOK && !pollOK:
+		return TunnelModeStream
+	case pollOK && !streamOK:
+		return TunnelModePoll
+	default:
+		return ""
 	}
 }
 
