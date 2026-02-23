@@ -146,6 +146,7 @@ func BuildConfigFromShortLink(link string) (*Config, error) {
 		RuleURLs: []string{
 			"https://gh-proxy.org/https://raw.githubusercontent.com/blackmatrix7/ios_rule_script/master/rule/Clash/China/China.list",
 			"https://gh-proxy.org/https://raw.githubusercontent.com/fernvenue/chn-cidr-list/master/ipv4.yaml",
+			"https://gh-proxy.org/https://raw.githubusercontent.com/fernvenue/chn-cidr-list/master/ipv6.yaml",
 		},
 	}
 

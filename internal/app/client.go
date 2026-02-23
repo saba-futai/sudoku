@@ -178,7 +178,7 @@ func handleClientSocks5(conn net.Conn, cfg *config.Config, table *sudoku.Table, 
 	switch header[1] {
 	case 0x01:
 	case 0x03:
-		handleSocks5UDPAssociate(conn, cfg, dialer)
+		handleSocks5UDPAssociate(conn, cfg, geoMgr, dialer)
 		return
 	default:
 		conn.Write([]byte{0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
@@ -201,7 +201,7 @@ func handleClientSocks5(conn net.Conn, cfg *config.Config, table *sudoku.Table, 
 	pipeConn(conn, targetConn)
 }
 
-func handleSocks5UDPAssociate(ctrl net.Conn, cfg *config.Config, dialer tunnel.Dialer) {
+func handleSocks5UDPAssociate(ctrl net.Conn, cfg *config.Config, geoMgr *geodata.Manager, dialer tunnel.Dialer) {
 	uotDialer, ok := dialer.(tunnel.UoTDialer)
 	if !ok {
 		ctrl.Write([]byte{0x05, 0x07, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
@@ -234,7 +234,7 @@ func handleSocks5UDPAssociate(ctrl net.Conn, cfg *config.Config, dialer tunnel.D
 	}
 
 	logx.Infof("SOCKS5/UDP", "Associate ready on %s -> %s", udpConn.LocalAddr().String(), cfg.ServerAddress)
-	session := newUoTClientSession(ctrl, udpConn, uotConn)
+	session := newUoTClientSession(ctrl, udpConn, uotConn, udpNet, cfg, geoMgr)
 	session.run()
 }
 
@@ -336,6 +336,9 @@ type uotClientSession struct {
 	ctrlConn  net.Conn
 	udpConn   *net.UDPConn
 	uotConn   net.Conn
+	udpNet    string
+	cfg       *config.Config
+	geoMgr    *geodata.Manager
 	closeOnce sync.Once
 	closed    chan struct{}
 
@@ -343,16 +346,30 @@ type uotClientSession struct {
 	clientAddr   *net.UDPAddr
 
 	allowedClientIP net.IP
+
+	peerMu   sync.Mutex
+	peers    map[string]time.Time
+	peerTTL  time.Duration
+	routeMu  sync.Mutex
+	routeLog map[string]time.Time
+	routeTTL time.Duration
 }
 
-func newUoTClientSession(ctrl net.Conn, udpConn *net.UDPConn, uotConn net.Conn) *uotClientSession {
+func newUoTClientSession(ctrl net.Conn, udpConn *net.UDPConn, uotConn net.Conn, udpNet string, cfg *config.Config, geoMgr *geodata.Manager) *uotClientSession {
 	return &uotClientSession{
 		ctrlConn: ctrl,
 		udpConn:  udpConn,
 		uotConn:  uotConn,
+		udpNet:   udpNet,
+		cfg:      cfg,
+		geoMgr:   geoMgr,
 		closed:   make(chan struct{}),
 		// Restrict UDP relay to the control connection's source IP to prevent hijacking/open relay.
 		allowedClientIP: ipFromNetAddr(ctrl.RemoteAddr()),
+		peers:           make(map[string]time.Time),
+		peerTTL:         2 * time.Minute,
+		routeLog:        make(map[string]time.Time),
+		routeTTL:        30 * time.Second,
 	}
 }
 
@@ -398,15 +415,46 @@ func (s *uotClientSession) pipeClientToServer() {
 			return
 		}
 		if s.allowedClientIP != nil && !s.allowedClientIP.Equal(normalizeIP(addr.IP)) {
+			if !s.isKnownPeer(addr) {
+				continue
+			}
+			clientAddr := s.getClientAddr()
+			if clientAddr == nil {
+				continue
+			}
+			resp := buildUDPResponsePacket(addr.String(), buf[:n])
+			if resp == nil {
+				continue
+			}
+			if _, err := s.udpConn.WriteToUDP(resp, clientAddr); err != nil {
+				s.close()
+				return
+			}
 			continue
 		}
-		destAddr, payload, err := decodeSocks5UDPRequest(buf[:n])
+
+		destAddr, destIP, payload, err := decodeSocks5UDPRequest(buf[:n])
 		if err != nil {
 			continue
 		}
 		s.setClientAddr(addr)
 
-		if err := tunnel.WriteUoTDatagram(s.uotConn, destAddr, payload); err != nil {
+		shouldProxy, match, directAddr := s.routeUDPTarget(destAddr, destIP)
+		s.logUDPRoute(addr, destAddr, match, shouldProxy)
+
+		if shouldProxy {
+			if err := tunnel.WriteUoTDatagram(s.uotConn, destAddr, payload); err != nil {
+				s.close()
+				return
+			}
+			continue
+		}
+
+		if directAddr == nil {
+			continue
+		}
+		s.notePeer(directAddr)
+		if _, err := s.udpConn.WriteToUDP(payload, directAddr); err != nil {
 			s.close()
 			return
 		}
@@ -453,6 +501,206 @@ func (s *uotClientSession) getClientAddr() *net.UDPAddr {
 	s.clientAddrMu.RLock()
 	defer s.clientAddrMu.RUnlock()
 	return s.clientAddr
+}
+
+func (s *uotClientSession) notePeer(addr *net.UDPAddr) {
+	if addr == nil {
+		return
+	}
+	key := addr.String()
+	now := time.Now()
+
+	s.peerMu.Lock()
+	defer s.peerMu.Unlock()
+	for k, exp := range s.peers {
+		if now.After(exp) {
+			delete(s.peers, k)
+		}
+	}
+	s.peers[key] = now.Add(s.peerTTL)
+}
+
+func (s *uotClientSession) isKnownPeer(addr *net.UDPAddr) bool {
+	if addr == nil {
+		return false
+	}
+	key := addr.String()
+	now := time.Now()
+
+	s.peerMu.Lock()
+	defer s.peerMu.Unlock()
+	for k, exp := range s.peers {
+		if now.After(exp) {
+			delete(s.peers, k)
+		}
+	}
+	exp, ok := s.peers[key]
+	return ok && now.Before(exp)
+}
+
+func (s *uotClientSession) logUDPRoute(src *net.UDPAddr, destAddr string, match string, shouldProxy bool) {
+	if strings.TrimSpace(destAddr) == "" {
+		return
+	}
+	key := destAddr
+	if shouldProxy {
+		key = "PROXY|" + key
+	} else {
+		key = "DIRECT|" + key
+	}
+
+	now := time.Now()
+	s.routeMu.Lock()
+	for k, exp := range s.routeLog {
+		if now.After(exp) {
+			delete(s.routeLog, k)
+		}
+	}
+	if exp, ok := s.routeLog[key]; ok && now.Before(exp) {
+		s.routeMu.Unlock()
+		return
+	}
+	s.routeLog[key] = now.Add(s.routeTTL)
+	s.routeMu.Unlock()
+
+	srcStr := "<unknown>"
+	if src != nil {
+		srcStr = src.String()
+	}
+	action := "PROXY"
+	if !shouldProxy {
+		action = "DIRECT"
+	}
+	actionText := action
+	if action == "DIRECT" {
+		actionText = logx.Bold(logx.Green(action))
+	} else {
+		actionText = logx.Bold(logx.Magenta(action))
+	}
+	matchText := logx.Yellow(match)
+	logx.Infof("UDP", "%s --> %s match %s using %s", srcStr, destAddr, matchText, actionText)
+}
+
+func (s *uotClientSession) routeUDPTarget(destAddr string, destIP net.IP) (bool, string, *net.UDPAddr) {
+	cfg := s.cfg
+	if cfg == nil {
+		return true, "CFG(nil)", nil
+	}
+
+	switch cfg.ProxyMode {
+	case "global":
+		return true, "MODE(global)", nil
+	case "direct":
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		addr, err := s.resolveDirectUDPAddr(ctx, destAddr, destIP, nil)
+		if err != nil {
+			return true, "MODE(direct)/RESOLVE_FAIL", nil
+		}
+		return false, "MODE(direct)", addr
+	case "pac":
+		if s.geoMgr == nil {
+			return true, "PAC(no-rules)", nil
+		}
+
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+
+		ok, m := s.geoMgr.MatchCN(destAddr, destIP)
+		if ok {
+			addr, err := s.resolveDirectUDPAddr(ctx, destAddr, destIP, nil)
+			if err != nil {
+				return true, m.String() + "/RESOLVE_FAIL", nil
+			}
+			if addr != nil && addr.IP != nil && addr.IP.To4() == nil && s.udpNet == "udp4" {
+				return true, m.String() + "/IPV6->PROXY", nil
+			}
+			return false, m.String(), addr
+		}
+
+		host, port, err := net.SplitHostPort(destAddr)
+		if err != nil {
+			return true, "PAC/ADDR_INVALID", nil
+		}
+
+		if destIP != nil {
+			return true, "PAC/NONE", nil
+		}
+
+		ips, err := lookupIPsWithCache(ctx, host)
+		if err != nil || len(ips) == 0 {
+			return true, "PAC/DNS_FAIL", nil
+		}
+
+		var directIP net.IP
+		var directMatch geodata.Match
+		for _, ip := range ips {
+			if ok, m := s.geoMgr.MatchCN(destAddr, ip); ok {
+				directIP = ip
+				directMatch = m
+				break
+			}
+		}
+		if directIP == nil {
+			return true, "PAC/NONE", nil
+		}
+
+		addr, err := s.resolveDirectUDPAddr(ctx, net.JoinHostPort(directIP.String(), port), directIP, directIP)
+		if err != nil {
+			return true, "DNS->" + directMatch.String() + "/RESOLVE_FAIL", nil
+		}
+		if addr != nil && addr.IP != nil && addr.IP.To4() == nil && s.udpNet == "udp4" {
+			return true, "DNS->" + directMatch.String() + "/IPV6->PROXY", nil
+		}
+		return false, "DNS->" + directMatch.String(), addr
+	default:
+		return true, "MODE(unknown)", nil
+	}
+}
+
+func (s *uotClientSession) resolveDirectUDPAddr(ctx context.Context, destAddr string, destIP net.IP, preferIP net.IP) (*net.UDPAddr, error) {
+	if strings.TrimSpace(destAddr) == "" {
+		return nil, fmt.Errorf("empty addr")
+	}
+
+	host, port, err := net.SplitHostPort(destAddr)
+	if err != nil {
+		return nil, err
+	}
+	portNum, err := net.LookupPort("udp", port)
+	if err != nil {
+		return nil, err
+	}
+
+	if preferIP != nil {
+		return &net.UDPAddr{IP: normalizeIP(preferIP), Port: portNum}, nil
+	}
+	if destIP != nil {
+		return &net.UDPAddr{IP: normalizeIP(destIP), Port: portNum}, nil
+	}
+
+	ips, err := lookupIPsWithCache(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("dns lookup failed: %w", err)
+	}
+	if len(ips) == 0 {
+		return nil, fmt.Errorf("no ip records")
+	}
+
+	var chosen net.IP
+	for _, ip := range ips {
+		if ip != nil && ip.To4() != nil {
+			chosen = ip
+			break
+		}
+	}
+	if chosen == nil {
+		chosen = ips[0]
+	}
+	if chosen == nil {
+		return nil, fmt.Errorf("no ip")
+	}
+	return &net.UDPAddr{IP: normalizeIP(chosen), Port: portNum}, nil
 }
 
 func handleClientSocks4(conn net.Conn, cfg *config.Config, table *sudoku.Table, geoMgr *geodata.Manager, dialer tunnel.Dialer) {
@@ -517,24 +765,25 @@ func readString(r io.Reader) (string, error) {
 	return string(buf), nil
 }
 
-func decodeSocks5UDPRequest(pkt []byte) (string, []byte, error) {
+func decodeSocks5UDPRequest(pkt []byte) (string, net.IP, []byte, error) {
 	if len(pkt) < 4 {
-		return "", nil, fmt.Errorf("packet too short")
+		return "", nil, nil, fmt.Errorf("packet too short")
 	}
 	if pkt[2] != 0x00 {
-		return "", nil, fmt.Errorf("frag not supported")
+		return "", nil, nil, fmt.Errorf("frag not supported")
 	}
 
 	reader := bytes.NewReader(pkt[3:])
 	addrStr, _, _, err := protocol.ReadAddress(reader)
 	if err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
+	destIP := net.ParseIP(hostOnly(addrStr))
 	payload := make([]byte, reader.Len())
 	if _, err := io.ReadFull(reader, payload); err != nil {
-		return "", nil, err
+		return "", nil, nil, err
 	}
-	return addrStr, payload, nil
+	return addrStr, destIP, payload, nil
 }
 
 func buildUDPResponsePacket(addr string, payload []byte) []byte {
