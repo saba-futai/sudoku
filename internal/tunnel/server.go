@@ -22,15 +22,6 @@ const (
 	HandshakeTimeout = 5 * time.Second
 )
 
-var (
-	// bufferPool for general IO operations
-	bufferPool = sync.Pool{
-		New: func() interface{} {
-			return make([]byte, 32*1024)
-		},
-	}
-)
-
 // BufferedConn wraps net.Conn and bufio.Reader
 type BufferedConn struct {
 	net.Conn
@@ -204,20 +195,8 @@ func (pc *prefixedRecorderConn) GetBufferedAndRecorded() []byte {
 	return out
 }
 
-type readOnlyConn struct {
-	*bytes.Reader
-}
-
-func (c *readOnlyConn) Write([]byte) (int, error)        { return 0, io.ErrClosedPipe }
-func (c *readOnlyConn) Close() error                     { return nil }
-func (c *readOnlyConn) LocalAddr() net.Addr              { return nil }
-func (c *readOnlyConn) RemoteAddr() net.Addr             { return nil }
-func (c *readOnlyConn) SetDeadline(time.Time) error      { return nil }
-func (c *readOnlyConn) SetReadDeadline(time.Time) error  { return nil }
-func (c *readOnlyConn) SetWriteDeadline(time.Time) error { return nil }
-
 func probeHandshakeBytes(probe []byte, cfg *config.Config, table *sudoku.Table) error {
-	rc := &readOnlyConn{Reader: bytes.NewReader(probe)}
+	rc := &connutil.ReadOnlyConn{Reader: bytes.NewReader(probe)}
 	_, obfsConn := buildObfsConnForServer(rc, table, cfg, false)
 	pskC2S, pskS2C := derivePSKDirectionalBases(cfg.Key)
 	// Server side: recv is client->server, send is server->client.

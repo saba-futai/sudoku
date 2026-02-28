@@ -8,6 +8,7 @@ import (
 
 	"github.com/saba-futai/sudoku/internal/config"
 	"github.com/saba-futai/sudoku/internal/tunnel"
+	"github.com/saba-futai/sudoku/pkg/connutil"
 	"github.com/saba-futai/sudoku/pkg/geodata"
 	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
 )
@@ -31,7 +32,7 @@ func handleHTTP(conn net.Conn, cfg *config.Config, _ *sudoku.Table, geoMgr *geod
 
 	if req.Method == http.MethodConnect {
 		_, _ = conn.Write([]byte("HTTP/1.1 200 Connection Established\r\n\r\n"))
-		pipeConn(conn, targetConn)
+		connutil.PipeConn(conn, targetConn)
 		return
 	}
 
@@ -48,7 +49,7 @@ func handleHTTP(conn net.Conn, cfg *config.Config, _ *sudoku.Table, geoMgr *geod
 		if retryable && req.ContentLength <= 0 {
 			if targetConn2, ok := dialTarget("TCP", conn.RemoteAddr(), host, destIP, cfg, geoMgr, dialer); ok {
 				if err2 := req.Write(targetConn2); err2 == nil {
-					pipeConn(conn, targetConn2)
+					connutil.PipeConn(conn, targetConn2)
 					return
 				}
 				_ = targetConn2.Close()
@@ -58,7 +59,7 @@ func handleHTTP(conn net.Conn, cfg *config.Config, _ *sudoku.Table, geoMgr *geod
 		_, _ = conn.Write([]byte("HTTP/1.1 502 Bad Gateway\r\n\r\n"))
 		return
 	}
-	pipeConn(conn, targetConn)
+	connutil.PipeConn(conn, targetConn)
 }
 
 func defaultPortForMethod(method string) string {

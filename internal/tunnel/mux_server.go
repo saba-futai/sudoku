@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/saba-futai/sudoku/internal/protocol"
+	"github.com/saba-futai/sudoku/pkg/connutil"
 )
 
 // HandleMuxServer handles a multiplexed tunnel connection after the control plane has selected mux mode.
@@ -53,7 +54,7 @@ func HandleMuxWithDialer(conn net.Conn, onConnect func(targetAddr string), dialT
 			return
 		}
 
-		pipeConn(stream, target)
+		connutil.PipeConn(stream, target)
 	})
 
 	<-sess.closed

@@ -26,7 +26,6 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
-	"io"
 	"net"
 	"time"
 
@@ -38,20 +37,8 @@ import (
 	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
 )
 
-type readOnlyConn struct {
-	*bytes.Reader
-}
-
-func (c *readOnlyConn) Write([]byte) (int, error)        { return 0, io.ErrClosedPipe }
-func (c *readOnlyConn) Close() error                     { return nil }
-func (c *readOnlyConn) LocalAddr() net.Addr              { return nil }
-func (c *readOnlyConn) RemoteAddr() net.Addr             { return nil }
-func (c *readOnlyConn) SetDeadline(time.Time) error      { return nil }
-func (c *readOnlyConn) SetReadDeadline(time.Time) error  { return nil }
-func (c *readOnlyConn) SetWriteDeadline(time.Time) error { return nil }
-
 func probeHandshakeBytes(probe []byte, cfg *ProtocolConfig, table *sudoku.Table) error {
-	rc := &readOnlyConn{Reader: bytes.NewReader(probe)}
+	rc := &connutil.ReadOnlyConn{Reader: bytes.NewReader(probe)}
 	_, obfsConn := buildServerObfsConn(rc, cfg, table, false)
 	pskC2S, pskS2C := tunnel.DerivePSKDirectionalBases(cfg.Key)
 	// Server side: recv is client->server, send is server->client.

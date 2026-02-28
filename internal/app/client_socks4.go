@@ -8,6 +8,7 @@ import (
 
 	"github.com/saba-futai/sudoku/internal/config"
 	"github.com/saba-futai/sudoku/internal/tunnel"
+	"github.com/saba-futai/sudoku/pkg/connutil"
 	"github.com/saba-futai/sudoku/pkg/geodata"
 	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
 )
@@ -53,7 +54,7 @@ func handleClientSocks4(conn net.Conn, cfg *config.Config, _ *sudoku.Table, geoM
 	}
 
 	_, _ = conn.Write([]byte{0x00, 0x5A, 0, 0, 0, 0, 0, 0})
-	pipeConn(conn, targetConn)
+	connutil.PipeConn(conn, targetConn)
 }
 
 func readString(r io.Reader) (string, error) {

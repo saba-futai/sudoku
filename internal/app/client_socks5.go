@@ -65,7 +65,7 @@ func handleClientSocks5(conn net.Conn, cfg *config.Config, _ *sudoku.Table, geoM
 	}
 
 	writeSocks5Reply(conn, 0x00)
-	pipeConn(conn, targetConn)
+	connutil.PipeConn(conn, targetConn)
 }
 
 func handleSocks5UDPAssociate(ctrl net.Conn, cfg *config.Config, geoMgr *geodata.Manager, dialer tunnel.Dialer) {

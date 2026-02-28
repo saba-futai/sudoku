@@ -1,4 +1,4 @@
-package app
+package connutil
 
 import (
 	"bytes"
@@ -61,7 +61,7 @@ func TestPipeConn_HalfCloseDoesNotTruncate(t *testing.T) {
 	t.Cleanup(func() { _ = pipeA.Close() })
 	t.Cleanup(func() { _ = pipeB.Close() })
 
-	go pipeConn(pipeA, pipeB)
+	go PipeConn(pipeA, pipeB)
 
 	deadline := time.Now().Add(2 * time.Second)
 	_ = clientConn.SetDeadline(deadline)

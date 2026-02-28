@@ -122,8 +122,8 @@ func main() {
 }
 ```
 
-## CDN/代理模式（stream / poll）
-如需通过 CDN（例如 Cloudflare 小黄云）转发到服务端，设置 `cfg.DisableHTTPMask=false` 且 `cfg.HTTPMaskMode="auto"`（或 `"stream"` / `"poll"`），并在 accept 后使用 `apis.NewHTTPMaskTunnelServer(cfg).HandleConn`：
+## CDN/代理模式（stream / poll / ws）
+如需通过 CDN（例如 Cloudflare 小黄云）转发到服务端，设置 `cfg.DisableHTTPMask=false` 且 `cfg.HTTPMaskMode="auto"`（或 `"stream"` / `"poll"` / `"ws"`），并在 accept 后使用 `apis.NewHTTPMaskTunnelServer(cfg).HandleConn`：
 
 ```go
 srv := apis.NewHTTPMaskTunnelServer(cfg)
@@ -143,7 +143,7 @@ for {
 ```
 
 ## HTTP 连接复用（HTTP/1.1 keep-alive / HTTP/2）
-当开启 HTTP mask（`stream` / `poll` / `auto`）时，设置 `HTTPMaskMultiplex="auto"` 会复用底层 HTTP 连接：
+当开启 HTTP mask（`stream` / `poll` / `auto` / `ws`）时，设置 `HTTPMaskMultiplex="auto"` 会复用底层 HTTP 连接：
 - HTTP/1.1：keep-alive 复用连接池
 - HTTPS + HTTP/2：同一条 h2 连接可并发承载多条隧道（多路复用）
 

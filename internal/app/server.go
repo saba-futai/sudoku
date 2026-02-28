@@ -15,6 +15,7 @@ import (
 	"github.com/saba-futai/sudoku/internal/protocol"
 	"github.com/saba-futai/sudoku/internal/reverse"
 	"github.com/saba-futai/sudoku/internal/tunnel"
+	"github.com/saba-futai/sudoku/pkg/connutil"
 	"github.com/saba-futai/sudoku/pkg/logx"
 	"github.com/saba-futai/sudoku/pkg/obfs/httpmask"
 	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
@@ -220,7 +221,7 @@ func handleSudokuServerConn(handshakeConn net.Conn, rawConn net.Conn, cfg *confi
 			return
 		}
 
-		pipeConn(tunnelConn, target)
+		connutil.PipeConn(tunnelConn, target)
 		return
 	default:
 		logx.Warnf("Server", "Unknown KIP message: %d", msg.Type)

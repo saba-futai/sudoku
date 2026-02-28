@@ -45,7 +45,8 @@ Unlike traditional random noise obfuscation, this protocol uses various masking 
 ### Security & Encryption
 Beneath the obfuscation layer, the protocol optionally employs AEAD to protect data integrity and confidentiality.
 *   **Algorithm Support**: AES-128-GCM or ChaCha20-Poly1305.
-*   **Anti-Replay**: The handshake phase includes timestamp validation, effectively preventing replay attacks.
+*   **PFS + Key Update**: Session keys are derived per connection and rotated during long transfers.
+*   **Anti-Replay**: Strict nonce de-duplication within a short TTL (plus timestamp skew checks) blocks window replays.
 
 ### Defensive Fallback
 When the server detects illegal handshake requests, timed-out connections, or malformed data packets, it does not disconnect immediately. Instead, it seamlessly forwards the connection to a specified decoy address (such as an Nginx or Apache server). Probers will only see a standard web server response.
