@@ -328,9 +328,6 @@ func smokeForwardHash(ctx context.Context, cfg *apis.ProtocolConfig, totalBytes 
 		}
 		remain -= n
 	}
-	if cw, ok := conn.(interface{ CloseWrite() error }); ok {
-		_ = cw.CloseWrite()
-	}
 
 	if err := <-errCh; err != nil {
 		return err
