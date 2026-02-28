@@ -69,97 +69,15 @@
 go build -o sudoku cmd/sudoku-tunnel/main.go
 ```
 
-### 服务端配置 (config.json)
+### 配置
 
-```json
-{
-  "mode": "server",
-  "local_port": 1080,
-  "server_address": "",
-  "fallback_address": "127.0.0.1:80",
-  "key": "见下面的运行步骤",
-  "aead": "chacha20-poly1305",
-  "suspicious_action": "fallback",
-  "ascii": "prefer_entropy",
-  "padding_min": 2,
-  "padding_max": 7,
-  "custom_table": "xpxvvpvv",
-  "custom_tables": [
-    "xpxvvpvv",
-    "vxpvxvvp"
-  ],
-  "enable_pure_downlink": true,
-  "httpmask": {
-    "disable": false,
-    "mode": "legacy",
-    "tls": false,
-    "host": "",
-    "path_root": "",
-    "multiplex": "off"
-  }
-}
-```
+配置模板与字段说明请看：
+- [configs/README.zh_CN.md](./configs/README.zh_CN.md)
+- [configs/README.md](./configs/README.md)
 
-如需自定义字节特征，可以在配置中加入 `custom_table`（两个 `x`、两个 `p`、四个 `v`，如 `xpxvvpvv`，共 420 种排列）；`"ascii": "prefer_ascii"` 会优先生效。
-
-如需轮换多套布局（降低长期固定特征被统计学习的风险），使用 `custom_tables`（字符串列表）。当 `custom_tables` 非空时会覆盖 `custom_table`，并在每条连接中随机选择其一；服务端会在握手阶段自动探测表，无需额外明文协商字段。
-
-注意：`sudoku://` 短链接已支持 `custom_tables`（字段 `ts`，并保留 `t` 作为单表回退）以及 CDN 相关的 HTTPMask 选项（`hm`/`ht`/`hh`/`hx`）；旧链接仍可正常解析。
-
-### 客户端配置
-
-将 `mode` 改为 `client`，并设置 `server_address` 为服务端 IP，将`local_port` 设置为代理监听端口，添加 `rule_urls` 使用`configs/config.json`的模板填充；如需带宽优化下行，将 `enable_pure_downlink` 置为 `false`。
-
-如需走 CDN/代理（例如 Cloudflare 小黄云），设置：
-- `"httpmask": { "disable": false, "mode": "auto" }`（或 `"stream"` / `"poll"`）
-- `"httpmask": { "multiplex": "auto" }`（复用底层 HTTP 连接：keep-alive / HTTP/2 多路复用；多条隧道可共享同一条连接）
-- `"httpmask": { "multiplex": "on" }`（单 tunnel 多目标：在同一条 HTTPMask 隧道内复用多条目标连接，进一步减少后续连接 RTT）
-- 客户端 `server_address` 可填写域名（如 `"example.com:443"`）；如需使用 HTTPS，请显式设置 `"httpmask": { "tls": true }`（不再按端口自动推断）。
-
-### 反向代理（将客户端服务暴露到服务端：HTTP + 纯 TCP）
-让 NAT 后的客户端把本地服务通过隧道暴露给服务端。
-
-服务端：
-```json
-{ "reverse": { "listen": ":8081" } }
-```
-客户端：
-```json
-{
-  "reverse": {
-    "client_id": "r4s",
-    "routes": [{ "path": "/gitea", "target": "127.0.0.1:3000" }]
-  }
-}
-```
-随后访问：`http://<server>:8081/gitea`（默认 `strip_prefix=true`）。
-
-纯 TCP 转发（例如 MC 25565）：
-```json
-{
-  "reverse": {
-    "routes": [{ "path": "", "target": "10.0.0.1:25565" }]
-  }
-}
-```
-此时直接用 TCP 客户端连接 `<server>:8081` 即可（每个 `reverse.listen` 仅支持 1 条 TCP 路由）。
-
-TCP-over-WebSocket（可走 HTTP/CDN 的端口转发）：
-```json
-{
-  "reverse": {
-    "routes": [{ "path": "/ssh", "target": "127.0.0.1:22" }]
-  }
-}
-```
-本地转发器：
-```bash
-./sudoku -rev-dial wss://example.com:8081/ssh -rev-listen 127.0.0.1:2222
-ssh -p 2222 127.0.0.1
-```
-说明：
-- 隧道入口是 **精确路径** `/ssh`（无尾斜杠），通过 WebSocket 子协议 `sudoku-tcp-v1` 识别。
-- 非 `sudoku-tcp-v1` 的 WebSocket 仍会按普通反向代理转发到上游应用。
+模板：
+- `configs/server.config.json`
+- `configs/client.config.json`
 
 ### Docker（服务端）
 本地构建：
@@ -168,7 +86,7 @@ docker build -t sudoku:local .
 ```
 运行（挂载你的配置）：
 ```bash
-docker run --rm -p 8080:8080 -p 8081:8081 -v "$PWD/config.json:/etc/sudoku/config.json:ro" sudoku:local
+docker run --rm -p 8080:8080 -p 8081:8081 -v "$PWD/server.config.json:/etc/sudoku/server.config.json:ro" sudoku:local
 ```
 
 **注意**：Key一定要用sudoku专门生成
@@ -191,9 +109,10 @@ Split Private Key: 89acb9663cfd3bd04adf0001cc7000a8eb312903088b33a847d7e5cf102f1
 ```
 将此处的`Split Private Key`填入客户端配置的`key`。
 
-指定 `config.json` 路径为参数运行程序
+指定配置文件路径运行程序
 ```bash
-./sudoku -c config.json
+./sudoku -c server.config.json
+./sudoku -c client.config.json
 ```
 
 ## 协议流程

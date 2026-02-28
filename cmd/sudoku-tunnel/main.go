@@ -12,7 +12,7 @@ import (
 )
 
 var (
-	configPath  = flag.String("c", "config.json", "Path to configuration file")
+	configPath  = flag.String("c", "server.config.json", "Path to configuration file")
 	testConfig  = flag.Bool("test", false, "Test configuration file and exit")
 	keygen      = flag.Bool("keygen", false, "Generate a new Ed25519 key pair")
 	more        = flag.String("more", "", "Generate more Private key (hex) for split key generations")

@@ -25,4 +25,4 @@ USER sudoku
 EXPOSE 8080 8081
 
 ENTRYPOINT ["/usr/local/bin/sudoku"]
-CMD ["-c", "/etc/sudoku/config.json"]
+CMD ["-c", "/etc/sudoku/server.config.json"]

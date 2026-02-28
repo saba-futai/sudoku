@@ -44,7 +44,7 @@ func runSetupWizardTUI(defaultServerPath, publicHost string) (wizardInput, bool,
 
 	serverPath := strings.TrimSpace(defaultServerPath)
 	if serverPath == "" {
-		serverPath = "config.json"
+		serverPath = "server.config.json"
 	}
 	clientPath := "client.config.json"
 
@@ -177,10 +177,10 @@ func runSetupWizardTUI(defaultServerPath, publicHost string) (wizardInput, bool,
 				Title("Disable HTTP mask").
 				Description("Disable HTTP masking completely for direct TCP").
 				Value(&disableHTTPMask),
-			huh.NewInput().
-				Title("HTTP mask mode (legacy/auto/stream/poll/ws)").
-				Value(&httpMaskMode).
-				Validate(validateHTTPMaskMode),
+				huh.NewInput().
+					Title("HTTP mask mode (legacy/auto/stream/poll/ws)").
+					Value(&httpMaskMode).
+					Validate(validateHTTPMaskMode),
 			huh.NewConfirm().
 				Title("Use HTTPS for HTTP tunnel (TLS)").
 				Value(&httpMaskTLS),

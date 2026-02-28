@@ -25,7 +25,7 @@ import (
 )
 
 var (
-	flagHost     = flag.String("host", "8.219.204.112", "Server host (IPv4/IPv6 literal or domain)")
+	flagHost     = flag.String("host", "127.0.0.1", "Server host (IPv4/IPv6 literal or domain)")
 	flagKey      = flag.String("key", "", "Client key (split private or shared key)")
 	flagTimeout  = flag.Duration("timeout", 90*time.Second, "Per-case timeout")
 	flagFailFast = flag.Bool("failfast", true, "Stop at first failure")

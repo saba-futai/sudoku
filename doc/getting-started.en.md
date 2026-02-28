@@ -31,7 +31,8 @@ go build -o sudoku ./cmd/sudoku-tunnel
 - Put the `Available Private Key` into the client config `key`.
 - Need more private keys for the same public key? Run `./sudoku -keygen -more <master-private-key>`.
 
-## 4) Server config (`server.json`)
+## 4) Server config (`server.config.json`)
+You can start from the template: `configs/server.config.json`.
 ```json
 {
   "mode": "server",
@@ -49,7 +50,8 @@ go build -o sudoku ./cmd/sudoku-tunnel
 ```
 Tip: if you don’t have a decoy web server on `fallback_address`, set `"suspicious_action": "silent"` to drop suspicious connections instead.
 
-## 5) Client config (`client.json`)
+## 5) Client config (`client.config.json`)
+You can start from the template: `configs/client.config.json`.
 ```json
 {
   "mode": "client",
@@ -78,7 +80,7 @@ Tip: if you don’t have a decoy web server on `fallback_address`, set `"suspici
 - Routing mode tip: `rule_urls: ["global"]` proxies everything (simplest). For PAC mode, provide rule URLs (see `doc/README.md`), or start from a short link (`./sudoku -link ...`).
 
 ## 5.1) Optional: Cloudflare CDN (orange cloud)
-To run through Cloudflare (or other CDN/reverse-proxy), use real HTTP tunnel modes (`stream` / `poll` / `auto`). Do not use `legacy`.
+To run through Cloudflare (or other CDN/reverse-proxy), use real HTTP tunnel modes (`stream` / `poll` / `auto`) or WebSocket mode (`ws`). Do not use `legacy`.
 
 - Server: set `"httpmask": { "disable": false, "mode": "poll" }` (or `"auto"`).
 - Client: same, and set `"server_address": "your.domain.com:443"` (or other Cloudflare-supported HTTP(S) ports like `8080`/`8443`).
@@ -87,10 +89,10 @@ To run through Cloudflare (or other CDN/reverse-proxy), use real HTTP tunnel mod
 ## 6) Run
 ```bash
 # Server
-./sudoku -c server.json
+./sudoku -c server.config.json
 
 # Client (starts a mixed HTTP/SOCKS5 proxy on port 1080)
-./sudoku -c client.json
+./sudoku -c client.config.json
 ```
 
 ## 7) Verify it works
@@ -100,15 +102,15 @@ To run through Cloudflare (or other CDN/reverse-proxy), use real HTTP tunnel mod
 ## 8) Use or share a short link
 - Start the client directly from a link: `./sudoku -link "sudoku://..."`.
 - Export a link from your config to share:
-  - client config: `./sudoku -c client.json -export-link`
-  - server config: `./sudoku -c server.json -export-link -public-host host[:port]`
+  - client config: `./sudoku -c client.config.json -export-link`
+  - server config: `./sudoku -c server.config.json -export-link -public-host host[:port]`
 - Tip: short links support `custom_table`, `custom_tables` rotation, and CDN-related HTTP mask options.
 
 ## 9) Quick troubleshooting
 - Port in use: change `local_port` or free the port.
 - Handshake or 403 errors: verify the client `key` matches the server public key; ensure `ascii` and `aead` settings match.
 - Slow transfer: lower padding (`padding_min/max`) and confirm server bandwidth/firewall rules.
-- Validate configs without running: `./sudoku -c server.json -test`.
+- Validate configs without running: `./sudoku -c server.config.json -test`.
 
 ## 10) Run in the background and update
 - Linux persistence: see the systemd example in `doc/README.md`.
@@ -118,12 +120,12 @@ To run through Cloudflare (or other CDN/reverse-proxy), use real HTTP tunnel mod
 ## 11) Optional: Reverse proxy (HTTP + TCP-over-WebSocket)
 Expose client-side services (behind NAT) on a server-side entry port.
 
-Server (`server.json`):
+Server (`server.config.json`):
 ```json
 { "reverse": { "listen": ":8081" } }
 ```
 
-Client (`client.json`):
+Client (`client.config.json`):
 ```json
 {
   "reverse": {

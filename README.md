@@ -67,96 +67,15 @@ When the server detects illegal handshake requests, timed-out connections, or ma
 go build -o sudoku cmd/sudoku-tunnel/main.go
 ```
 
-### Server Configuration (config.json)
+### Configuration
 
-```json
-{
-  "mode": "server",
-  "local_port": 1080,
-  "server_address": "",
-  "fallback_address": "127.0.0.1:80",
-  "key": "See the running steps below",
-  "aead": "chacha20-poly1305",
-  "suspicious_action": "fallback",
-  "ascii": "prefer_entropy",
-  "padding_min": 2,
-  "padding_max": 7,
-  "custom_table": "xpxvvpvv",
-  "custom_tables": [
-    "xpxvvpvv",
-    "vxpvxvvp"
-  ],
-  "enable_pure_downlink": true,
-  "httpmask": {
-    "disable": false,
-    "mode": "legacy",
-    "tls": false,
-    "host": "",
-    "path_root": "",
-    "multiplex": "off"
-  }
-}
-```
-Add `"custom_table": "xpxvvpvv"` (two `x`, two `p`, four `v`, 420 permutations allowed) to enforce a custom byte layout; `"ascii": "prefer_ascii"` still overrides it.
+Configuration templates and field explanations:
+- [configs/README.md](./configs/README.md)
+- [configs/README.zh_CN.md](./configs/README.zh_CN.md)
 
-For table rotation, use `"custom_tables": ["xpxvvpvv", "vxpvxvvp"]`. When `custom_tables` is non-empty it overrides `custom_table`; the client picks one table per connection and the server probes the handshake to detect it (no extra plaintext negotiation field).
-
-Note: `sudoku://` short links support `custom_table` (`t`), `custom_tables` rotation (`ts`), and CDN-related HTTP mask options (`hm`/`ht`/`hh`/`hx`/`hy`).
-
-### Client Configuration
-
-Change `mode` to `client`, set `server_address` to the Server IP, set `local_port` to the proxy listening port, add `rule_urls` using the template in `configs/config.json`. Toggle `enable_pure_downlink` to `false` if you want the packed downlink mode.
-
-To run behind a CDN/proxy (e.g., Cloudflare orange-cloud), set:
-- `"httpmask": { "disable": false, "mode": "auto" }` (or `"stream"` / `"poll"`)
-- `"httpmask": { "multiplex": "auto" }` (reuse underlying HTTP connections across multiple tunnel dials; HTTP/2 can multiplex multiple tunnels on one connection)
-- `"httpmask": { "multiplex": "on" }` (single tunnel, multi-target mux inside one HTTPMask tunnel; reduces per-connection RTT further)
-- client-side `server_address` can be a domain (e.g., `"example.com:443"`); set `"httpmask": { "tls": true }` to use HTTPS (no port-based inference).
-
-### Reverse Proxy (Expose client services: HTTP + raw TCP)
-Expose a client-side service (behind NAT) via a server-side entry.
-
-Server:
-```json
-{ "reverse": { "listen": ":8081" } }
-```
-Client:
-```json
-{
-  "reverse": {
-    "client_id": "r4s",
-    "routes": [{ "path": "/gitea", "target": "127.0.0.1:3000" }]
-  }
-}
-```
-Then access: `http://<server>:8081/gitea` (default `strip_prefix=true`).
-
-Raw TCP forwarding:
-```json
-{
-  "reverse": {
-    "routes": [{ "path": "", "target": "127.0.0.1:25565" }]
-  }
-}
-```
-Then connect your TCP client to `<server>:8081` directly. (Only one TCP route per entry.)
-
-TCP-over-WebSocket (TCP-over-HTTP/CDN):
-```json
-{
-  "reverse": {
-    "routes": [{ "path": "/ssh", "target": "127.0.0.1:22" }]
-  }
-}
-```
-Run a local forwarder:
-```bash
-./sudoku -rev-dial wss://example.com:8081/ssh -rev-listen 127.0.0.1:2222
-ssh -p 2222 127.0.0.1
-```
-Notes:
-- The tunnel endpoint is the **exact path** `/ssh` (no trailing slash) and negotiates WebSocket subprotocol `sudoku-tcp-v1`.
-- Non-`sudoku-tcp-v1` WebSockets are still proxied to the upstream app normally.
+Templates:
+- `configs/server.config.json`
+- `configs/client.config.json`
 
 ### Docker (Server)
 Build locally:
@@ -165,7 +84,7 @@ docker build -t sudoku:local .
 ```
 Run (mount your config):
 ```bash
-docker run --rm -p 8080:8080 -p 8081:8081 -v "$PWD/config.json:/etc/sudoku/config.json:ro" sudoku:local
+docker run --rm -p 8080:8080 -p 8081:8081 -v "$PWD/server.config.json:/etc/sudoku/server.config.json:ro" sudoku:local
 ```
 
 **Note**: The Key must be generated specifically by Sudoku.
@@ -187,9 +106,10 @@ $  ./sudoku -keygen -more 709aab5f030c9b8c322811d5c6545497c2136ce1e43b574e231562
 Split Private Key: 89acb9663cfd3bd04adf0001cc7000a8eb312903088b33a847d7e5cf102f1d0ad4c1e755e1717114bee50777d9dd3204d7e142dedcb023a6db3d7c602cb9d40e
 ```
 
-Run the program specifying the `config.json` path as an argument:
+Run the program specifying a config path:
 ```bash
-./sudoku -c config.json
+./sudoku -c server.config.json
+./sudoku -c client.config.json
 ```
 
 ## Protocol Flow

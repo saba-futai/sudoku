@@ -32,8 +32,8 @@ go build -o sudoku ./cmd/sudoku-tunnel
 - `Available Private Key`：填到客户端配置里的 `key`。
 - 需要更多私钥对应同一个公钥时，使用 `./sudoku -keygen -more <master-private-key>`。
 
-## 4. 准备服务端配置（server.json）
-将以下内容保存为 `server.json`（按需修改端口和回落地址）：
+## 4. 准备服务端配置（server.config.json）
+可直接从模板 `configs/server.config.json` 复制，然后按需修改端口和回落地址：
 ```json
 {
   "mode": "server",
@@ -51,8 +51,8 @@ go build -o sudoku ./cmd/sudoku-tunnel
 ```
 提示：如果你没有在 `fallback_address` 上准备诱饵网页服务，可以把 `"suspicious_action"` 设为 `"silent"`，对可疑连接直接丢弃。
 
-## 5. 准备客户端配置（client.json）
-将以下内容保存为 `client.json`，把 `server_address` 改成你的服务器地址和端口，把 `key` 换成 Available Private Key：
+## 5. 准备客户端配置（client.config.json）
+可直接从模板 `configs/client.config.json` 复制，把 `server_address` 改成你的服务器地址和端口，把 `key` 换成 Available Private Key：
 ```json
 {
   "mode": "client",
@@ -81,7 +81,7 @@ go build -o sudoku ./cmd/sudoku-tunnel
 - 分流提示：`rule_urls: ["global"]` 表示全局代理（最省心）。如需 PAC 分流，请配置规则 URL（见 `doc/README.md`），或直接用短链启动（`./sudoku -link ...`）。
 
 ## 5.1（可选）过 Cloudflare CDN（小黄云）
-如需走 Cloudflare CDN/反代，请使用真实 HTTP 隧道模式（`stream` / `poll` / `auto`），不要用 `legacy`。
+如需走 Cloudflare CDN/反代，请使用真实 HTTP 隧道模式（`stream` / `poll` / `auto`）或 WebSocket 模式（`ws`），不要用 `legacy`。
 
 - 服务端：设置 `"httpmask": { "disable": false, "mode": "poll" }`（或 `"auto"`）。
 - 客户端：同样开启 HTTP mask，并把 `"server_address"` 填成 Cloudflare 域名（例如 `"your.domain.com:443"`；也可用 Cloudflare 支持的 `8080`/`8443` 等端口）。
@@ -90,10 +90,10 @@ go build -o sudoku ./cmd/sudoku-tunnel
 ## 6. 启动
 ```bash
 # 服务端
-./sudoku -c server.json
+./sudoku -c server.config.json
 
 # 客户端（本机开启 HTTP/SOCKS5 混合代理，默认 1080 端口）
-./sudoku -c client.json
+./sudoku -c client.config.json
 ```
 
 ## 7. 验证是否成功
@@ -103,8 +103,8 @@ go build -o sudoku ./cmd/sudoku-tunnel
 ## 8. 使用/导出短链
 - 启动客户端并直接用短链：`./sudoku -link "sudoku://..."`。
 - 从配置导出短链（分享给别人）：
-  - 客户端配置：`./sudoku -c client.json -export-link`
-  - 服务端配置：`./sudoku -c server.json -export-link -public-host 域名[:端口]`
+  - 客户端配置：`./sudoku -c client.config.json -export-link`
+  - 服务端配置：`./sudoku -c server.config.json -export-link -public-host 域名[:端口]`
 短链可让对方免编辑配置，直接运行即可。
 提示：短链接支持 `custom_table` 以及 `custom_tables`（多表轮换），并可携带 CDN 相关的 HTTP mask 选项。
 
@@ -112,7 +112,7 @@ go build -o sudoku ./cmd/sudoku-tunnel
 - **端口占用**：更换 `local_port` 或释放冲突程序。
 - **握手失败/403**：确认客户端 `key` 与服务端公钥匹配；确保双方 `ascii`、`aead` 设置一致。
 - **连得上但很慢**：检查 `padding_min/max` 是否设置过大；确认服务器出口带宽与防火墙放行。
-- **配置是否生效**：使用 `-test` 选项，例如 `./sudoku -c server.json -test`，仅校验配置不真正启动。
+- **配置是否生效**：使用 `-test` 选项，例如 `./sudoku -c server.config.json -test`，仅校验配置不真正启动。
 
 ## 10. 后台运行与更新
 - Linux 持久化：可参考 `doc/README.md` 里的 systemd 示例编写服务。
@@ -122,12 +122,12 @@ go build -o sudoku ./cmd/sudoku-tunnel
 ## 11（可选）反向代理（HTTP 子路径 + TCP-over-WebSocket）
 用于把客户端（内网/NAT 后）服务通过服务端的一个入口端口暴露出来。
 
-服务端（`server.json`）：
+服务端（`server.config.json`）：
 ```json
 { "reverse": { "listen": ":8081" } }
 ```
 
-客户端（`client.json`）：
+客户端（`client.config.json`）：
 ```json
 {
   "reverse": {

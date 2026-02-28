@@ -1,0 +1,26 @@
+{
+  "mode": "server",
+  "transport": "tcp",
+  "local_port": 8080,
+  "fallback_address": "127.0.0.1:80",
+  "key": "MASTER_PUBLIC_KEY_HEX",
+  "aead": "chacha20-poly1305",
+  "suspicious_action": "fallback",
+  "padding_min": 5,
+  "padding_max": 15,
+  "custom_table": "",
+  "custom_tables": [],
+  "ascii": "prefer_entropy",
+  "enable_pure_downlink": true,
+  "httpmask": {
+    "disable": false,
+    "mode": "legacy",
+    "tls": false,
+    "host": "",
+    "path_root": "",
+    "multiplex": "off"
+  },
+  "reverse": {
+    "listen": ""
+  }
+}

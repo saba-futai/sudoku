@@ -1,147 +1,175 @@
-# 配置文件说明（`configs/config.json`）
+# Configuration Guide (JSON)
 
-本项目使用单个 JSON 配置文件同时支持服务端与客户端。你可以直接复制 `configs/config.json` 作为模板手动修改。
+[中文说明](./README.zh_CN.md)
 
-## 最小示例
+This project uses **two** JSON configuration files:
+- Server template: `configs/server.config.json`
+- Client template: `configs/client.config.json`
 
-**服务端（`mode: "server"`）**
+You can rename them to any filename; start the program with `-c`.
 
+```bash
+./sudoku -c server.config.json
+./sudoku -c client.config.json
+```
+
+## Quick Start
+
+1. Generate keys:
+   ```bash
+   ./sudoku -keygen
+   ```
+2. Put **Master Public Key** into the server config `key`.
+3. Put **Available Private Key** into the client config `key`.
+
+## Minimal Examples
+
+Server (basic TCP):
 ```json
 {
   "mode": "server",
   "local_port": 8080,
   "fallback_address": "127.0.0.1:80",
-  "suspicious_action": "fallback",
-  "key": "<服务端使用公钥（hex）>",
+  "key": "MASTER_PUBLIC_KEY_HEX",
   "aead": "chacha20-poly1305",
-  "ascii": "prefer_entropy",
+  "suspicious_action": "fallback",
   "padding_min": 5,
   "padding_max": 15,
+  "ascii": "prefer_entropy",
   "enable_pure_downlink": true,
-  "httpmask": {
-    "disable": false,
-    "mode": "legacy",
-    "tls": false,
-    "host": "",
-    "path_root": "",
-    "multiplex": "off"
-  }
+  "httpmask": { "disable": false, "mode": "legacy" }
 }
 ```
 
-**客户端（`mode: "client"`）**
-
+Client (basic TCP):
 ```json
 {
   "mode": "client",
   "local_port": 1080,
   "server_address": "example.com:8080",
-  "key": "<客户端可填私钥或公钥（hex）>",
+  "key": "AVAILABLE_PRIVATE_KEY_HEX",
   "aead": "chacha20-poly1305",
-  "ascii": "prefer_entropy",
   "padding_min": 5,
   "padding_max": 15,
+  "ascii": "prefer_entropy",
   "enable_pure_downlink": true,
-  "httpmask": {
-    "disable": false,
-    "mode": "legacy",
-    "tls": false,
-    "host": "",
-    "path_root": "",
-    "multiplex": "off"
-  },
+  "httpmask": { "disable": false, "mode": "legacy" },
   "rule_urls": ["global"]
 }
 ```
 
-## 字段语义
+## Field Guide
 
-### 基础字段
-- `mode`：`"server"` 或 `"client"`。
-- `local_port`：服务端监听端口（server）；客户端本地混合代理监听端口（client）。
-- `server_address`：仅客户端使用，形如 `"host:port"`。
-- `fallback_address`：仅服务端使用，形如 `"127.0.0.1:80"`；用于可疑流量回落到本机/同机的 Web 服务。
-- `suspicious_action`：仅服务端使用：
-  - `"fallback"`：回落转发到 `fallback_address`
-  - `"silent"`：静默吞掉（tarpit）
+### Basics
+- `mode`: `"server"` or `"client"`.
+- `local_port`:
+  - server: public listening port
+  - client: local mixed proxy port (HTTP + SOCKS)
+- `server_address` (client only): server `host:port`.
+- `fallback_address` (server only): decoy `host:port` for suspicious traffic.
+- `suspicious_action` (server only):
+  - `"fallback"`: forward to the decoy
+  - `"silent"`: keep the connection but do not respond
 
-### 密钥 / 加密
-- `key`：共享密钥（推荐填公钥 hex）。生成方式：
-  - `./sudoku -keygen`：会输出 split 私钥、master 私钥与 master 公钥（推荐把 **公钥** 放到服务端）。
-  - 客户端为了多用户识别/分离密钥，可填 split 私钥；程序会自动推导公钥并在启动日志打印 `Derived Public Key`。
-- `aead`：`"chacha20-poly1305"` / `"aes-128-gcm"` / `"none"`（不建议生产使用）。
+### Keys & AEAD
+- `key`:
+  - server: **Master Public Key**
+  - client: **Available Private Key**
+- `aead`: `"chacha20-poly1305"` / `"aes-128-gcm"` / `"none"` (testing only).
 
-### Sudoku 编码 / 填充
-- `ascii`：`"prefer_entropy"`（默认）或 `"prefer_ascii"`。
-- `padding_min` / `padding_max`：0–100 的概率百分比，表示在编码流中插入 padding 的概率范围（`max` 必须 >= `min`）。
-- `custom_table`：自定义布局（8 个字符，包含 2 个 `x`、2 个 `p`、4 个 `v`），例如 `"xpxvvpvv"`。
-- `custom_tables`：多套布局轮换（数组）。当配置多表时，客户端每条连接随机选择，服务端通过握手探测选择。
-- `enable_pure_downlink`：
-  - `true`：上下行都走纯 Sudoku 编码
-  - `false`：下行启用 6-bit 拆分以提升带宽（要求 `aead != "none"`，且客户端/服务端必须一致）
+### Sudoku encoding & padding
+- `ascii`: `"prefer_entropy"` (recommended) or `"prefer_ascii"`.
+- `padding_min` / `padding_max`: 0–100 percentage; `padding_max` must be ≥ `padding_min`.
+- `custom_table`: optional layout string like `"xpxvvpvv"` (2×`x`, 2×`p`, 4×`v`).
+- `custom_tables`: optional array of layouts; if non-empty it rotates layouts per connection.
+- `enable_pure_downlink`:
+  - `true`: both directions use classic Sudoku encoding
+  - `false`: packed downlink mode to reduce overhead (requires AEAD, and both ends must match)
 
-### HTTP 伪装 / HTTP Tunnel
-- 推荐使用新的 `httpmask` 对象统一管理 HTTP 伪装/隧道相关字段：
-  - `httpmask.disable`：`true` 禁用所有 HTTP 伪装。
-  - `httpmask.mode`：
-    - `"legacy"`：写一个伪造 HTTP/1.1 头后切到原始流（默认，非 CDN 模式）
-    - `"stream"` / `"poll"` / `"auto"`：CDN 友好的 HTTP tunnel 模式（通过 CDN 时建议用这些）
-    - `"ws"`：WebSocket 隧道（更适合 CDN/反代；服务端检测 Upgrade 后升级连接并进入 Sudoku 握手）
-  - HTTP tunnel 模式（`stream`/`poll`/`auto`）会强制启用基于 `key` 的短期 HMAC/Token 校验以减少主动探测，无需额外字段（强制更新）。
-  - `httpmask.tls`：仅客户端 tunnel 模式生效；`true` 表示使用 HTTPS。
-  - `httpmask.host`：仅客户端 tunnel 模式生效；覆盖 HTTP Host/SNI（可留空）。
-  - `httpmask.path_root`：可选，作为 **一级路径前缀**（双方需一致）。示例：填 `"aabbcc"` 后，端点会变为：
-    - `/<path_root>/session`
-    - `/<path_root>/stream`
-    - `/<path_root>/api/v1/upload`
-  - `httpmask.multiplex`：
-    - `"off"`：不复用（每个目标单独建 tunnel）
-    - `"auto"`：复用底层 HTTP 连接（keep-alive / h2）
-    - `"on"`：开启“单隧道多目标”的 mux（客户端减少 RTT；服务端会看到 mux session）
+### HTTP masking / HTTP tunnel
+All HTTP-related knobs live under the `httpmask` object.
 
-### 反向代理（Reverse Proxy over Sudoku）
-用于让 NAT 后的客户端把本地服务通过隧道暴露给服务端。
+Example (CDN/proxy friendly mode):
+```json
+{
+  "httpmask": {
+    "disable": false,
+    "mode": "auto",
+    "tls": true,
+    "host": "example.com",
+    "path_root": "aabbcc",
+    "multiplex": "auto"
+  }
+}
+```
 
-- 服务端：`reverse.listen`（如 `":8081"`）开启一个入口：
-  - HTTP 子路径反代：通过 `http://<server>:8081/<path>/...` 访问（Web UI 建议用 `/<path>/` 带尾斜杠）
-  - TCP-over-WebSocket（更适合 CDN/反代）：对每个 `path != ""` 的路由，精确路径 `/<path>`（**无尾斜杠**）可建立 WebSocket 隧道，并协商子协议 `sudoku-tcp-v1` 承载任意 TCP 转发
-  - 纯 TCP：当存在 `path=""` 的路由时，`reverse.listen` 上的非 HTTP 入站连接会被当作**纯 TCP**转发到该目标（每个入口仅支持 1 条 TCP 路由）
-- 客户端：`reverse.routes` 声明要暴露的本地服务：
-  - `reverse.routes[].path`：对外路径前缀（如 `"/gitea"`）
-  - `reverse.routes[].target`：客户端本地 `host:port`（如 `"127.0.0.1:3000"`）
-  - `reverse.routes[].strip_prefix`：是否去掉前缀后再转发（默认 `true`；开启后会自动重写 `Location`/`Set-Cookie Path` 以及 HTML/CSS/SVG 内的根路径引用以适配子路径挂载；JS 不做内容重写以避免破坏 bundle/正则，根路径 API/WS 请求通过 `Referer` + Cookie 路由回退保证可用）
-  - `reverse.routes[].host_header`：可选，覆盖转发时的 `Host`
+- `disable`: set `true` to turn off all HTTP masking/tunneling.
+- `mode`:
+  - `"legacy"`: send one fake HTTP/1.1 header then switch to raw stream (not CDN-friendly)
+  - `"stream"` / `"poll"` / `"auto"`: HTTP tunnel modes (CDN-friendly)
+  - `"ws"`: WebSocket tunnel mode (CDN/reverse-proxy friendly)
+- `tls` (client only, tunnel modes): set `true` to use HTTPS to the entry.
+- `host` (client only, tunnel modes): override HTTP Host / SNI (optional).
+- `path_root` (optional): first-level path prefix shared by both ends.
+- `multiplex`:
+  - `"off"`: do not reuse connections
+  - `"auto"`: reuse HTTP connections when possible (keep-alive / HTTP/2)
+  - `"on"`: enable a single-tunnel multi-target mux (lower RTT for many connections)
 
-示例（客户端暴露 Web + SSH）：
+### Reverse proxy (expose client services)
+Reverse proxy settings live under the `reverse` object.
+
+Server entry:
+```json
+{ "reverse": { "listen": ":8081" } }
+```
+
+Client routes:
 ```json
 {
   "reverse": {
+    "client_id": "client-1",
     "routes": [
-      { "path": "/gitea", "target": "127.0.0.1:3000" },
+      { "path": "/gitea", "target": "127.0.0.1:3000", "strip_prefix": true },
       { "path": "/ssh", "target": "127.0.0.1:22" }
     ]
   }
 }
 ```
 
-- HTTP：打开 `http://<server>:8081/gitea/`
-- TCP-over-WebSocket：用内置转发器把本地端口转发到 `wss://<server>:8081/ssh`（注意 `/ssh` **不要**带尾斜杠）：
+- Server config only needs `reverse.listen` to open the entry port. Routes are always defined on the client.
+- `listen` (server): the public reverse entry address.
+- `client_id` (client): optional identifier for multi-client routing/management.
+- `routes` (client): array of services to expose.
+  - `path`: URL path prefix (for HTTP) or exact path (for TCP-over-WebSocket).
+  - `target`: client-side `host:port`.
+  - `strip_prefix`: whether to remove the prefix before proxying (default `true`).
+  - `host_header`: optional override for upstream `Host`.
+
+TCP-over-WebSocket (client-side local forwarder):
 ```bash
 ./sudoku -rev-dial wss://example.com:8081/ssh -rev-listen 127.0.0.1:2222
 ssh -p 2222 127.0.0.1
 ```
+Notes:
+- The tunnel endpoint is the **exact path** `/ssh` (no trailing slash).
+- The WebSocket subprotocol is `sudoku-tcp-v1` (handled by the built-in forwarder).
 
-注意：
-- Web UI 一般应使用 `/<path>/`（目录形式，带尾斜杠），否则浏览器解析相对资源会跑到根路径。
-- `/<path>`（**无尾斜杠**）被保留用于 TCP-over-WebSocket 入口：仅当客户端协商子协议 `sudoku-tcp-v1` 时才会进入 TCP 隧道；否则会按普通 HTTP/WebSocket 反代到上游应用（应用自身的 WS 不受影响）。
+Raw TCP forwarding (one per server entry):
+```json
+{
+  "reverse": {
+    "client_id": "client-1",
+    "routes": [{ "target": "10.0.0.1:25565" }]
+  }
+}
+```
 
-纯 TCP 反代：
-- 将 `reverse.routes[].path` 置空（或省略该字段）即可启用 TCP 映射：`{ "target": "10.0.0.1:25565" }`
-- 该模式每个 `reverse.listen` 仅支持 **1 条** TCP 路由（因为原始 TCP 没有“路径”可以区分多服务）
+## Routing rules (client)
+`rule_urls` controls proxy routing (PAC/rule download):
+- `["global"]`: proxy everything
+- `["direct"]`: proxy nothing
+- URL list: download rule files and route accordingly
 
-### 其他
-- `rule_urls`：仅客户端 `proxy_mode=pac` 时使用；支持：
-  - `["global"]`：全局代理
-  - `["direct"]`：全直连
-  - 或填 URL 列表（PAC/规则下载）
-- `transport`：当前版本保留字段，建议保持 `"tcp"`。
+Mainland China example:
+- The default `configs/client.config.json` uses a PAC URL list suitable as an example for Mainland China users (BiliBili/WeChat/ChinaMaxNoIP + CN CIDR v4/v6).

@@ -175,11 +175,11 @@ func (c *ProtocolConfig) Validate() error {
 		return fmt.Errorf("HandshakeTimeoutSeconds must be >= 0, got %d", c.HandshakeTimeoutSeconds)
 	}
 
-	switch strings.ToLower(strings.TrimSpace(c.HTTPMaskMode)) {
-	case "", "legacy", "stream", "poll", "auto", "ws":
-	default:
-		return fmt.Errorf("invalid HTTPMaskMode: %s, must be one of: legacy, stream, poll, auto, ws", c.HTTPMaskMode)
-	}
+		switch strings.ToLower(strings.TrimSpace(c.HTTPMaskMode)) {
+		case "", "legacy", "stream", "poll", "auto", "ws":
+		default:
+			return fmt.Errorf("invalid HTTPMaskMode: %s, must be one of: legacy, stream, poll, auto, ws", c.HTTPMaskMode)
+		}
 
 	switch strings.ToLower(strings.TrimSpace(c.HTTPMaskMultiplex)) {
 	case "", "off", "auto", "on":
