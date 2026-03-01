@@ -20,10 +20,27 @@
 
 The core philosophy of this project is to utilize the mathematical properties of Sudoku grids to implement byte stream encoding/decoding, while providing arbitrary padding and resistance to active probing.
 
-## Android Client & Server Install Script：
+## Supported Clients
 
-**[Sudodroid](https://github.com/saba-futai/sudoku-android)**
-**[easy-install](https://github.com/SUDOKU-ASCII/easy-install)**
+Version requirements:
+- Mihomo-based clients: **Mihomo > v1.19.21** 
+- Official Android client Sudodroid: **Sudodroid >= v0.2.0**
+
+### Android
+- **CMFA (Clash Meta for Android / Mihomo kernel)**: https://github.com/MetaCubeX/ClashMetaForAndroid
+- **Sudodroid (official Sudoku client)**: https://github.com/saba-futai/sudoku-android
+
+### iOS
+- **Clash Mi (Mihomo kernel)**: https://github.com/KaringX/clashmi (App Store: https://apps.apple.com/us/app/clash-mi/id6744321968)
+
+### Desktop (Windows/macOS/Linux)
+- **Any Mihomo-kernel GUI wrapper** (e.g. Clash Verge Rev): https://github.com/Clash-Verge-rev/clash-verge-rev
+
+### Routers (OpenWrt)
+- **OpenClash**: https://github.com/vernesong/OpenClash
+
+### Install Script (server/tools)
+- https://github.com/SUDOKU-ASCII/easy-install
 
 ## Core Features
 
@@ -51,11 +68,24 @@ Beneath the obfuscation layer, the protocol optionally employs AEAD to protect d
 ### Defensive Fallback
 When the server detects illegal handshake requests, timed-out connections, or malformed data packets, it does not disconnect immediately. Instead, it seamlessly forwards the connection to a specified decoy address (such as an Nginx or Apache server). Probers will only see a standard web server response.
 
+#### Fallback as a Chained Proxy (Port Sharing)
+Fallback is not limited to “decoy web pages”. Since the server forwards the **raw TCP connection** and **replays bytes it already consumed during handshake**, `fallback_address` can also act as a simple **chained-proxy relay**.
+
+A common pattern is “Sudoku-to-Sudoku” chaining:
+1. **Inner (real) Sudoku server** listens on a private port (for example `0.0.0.0:8443`) with your real `key` / `aead` / `httpmask` settings.
+2. **Outer (entry) Sudoku server** listens on the public port and sets:
+   - `"suspicious_action": "fallback"`
+   - `"fallback_address": "x.x.x.x:8443"` (points to the inner server `ip:port`)
+   - either a **different (fake) `key`** from the inner server, or the **same key but different `ascii` preference**, so normal clients will fail the outer handshake and trigger fallback.
+3. **Client** connects to the outer public address, but uses the **inner server’s real key**.
+
+In effect, the client “connects to the outer server”, but the actual Sudoku handshake and tunnel are completed by the inner server; the outer server just replays the already-read prefix and then forwards bytes in both directions.
+(~~Yes, the jump box is also a full Sudoku server.~~)
+
 ### Drawbacks (TODO)
 1.  **Packet Format**: TCP native; UDP is relayed via UoT (UDP-over-TCP) without exposing a raw UDP listener.
-2.  **Bandwidth Utilization**: Obfuscation introduces overhead. Use the packed downlink mode to claw back bandwidth when downloads dominate.
-3.  **Client Proxy**: Only supports SOCKS5/HTTP.
-4.  **Protocol Popularity**: Currently only official and mihomo support, no compatibility with other cores.
+2.  **Client Proxy**: Only supports SOCKS5/HTTP. No native TUN.
+3.  **Protocol Popularity**: Currently only official and mihomo support, no compatibility with other cores.
 
 
 
@@ -82,7 +112,14 @@ Build locally:
 ```bash
 docker build -t sudoku:local .
 ```
-Run (mount your config):
+Run (auto-generate config on first start):
+```bash
+docker run --rm -p 8080:8080 -p 8081:8081 -v sudoku-data:/etc/sudoku sudoku:local
+```
+
+The container writes `/etc/sudoku/server.config.json` and `/etc/sudoku/keys.env` when they don’t exist, and prints the client key in logs.
+
+If you prefer to bring your own config, mount it instead:
 ```bash
 docker run --rm -p 8080:8080 -p 8081:8081 -v "$PWD/server.config.json:/etc/sudoku/server.config.json:ro" sudoku:local
 ```

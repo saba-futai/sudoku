@@ -17,10 +17,27 @@
 
 该项目的核心理念是利用数独网格的数学特性，实现对字节流的编解码，同时提供任意填充与抗主动探测能力。
 
-## 安卓客户端 & 服务器一键脚本：
+## 客户端支持
 
-**[Sudodroid](https://github.com/saba-futai/sudoku-android)**
-**[easy-install](https://github.com/SUDOKU-ASCII/easy-install)**
+版本要求：
+- 基于 Mihomo 内核的客户端：**Mihomo > v1.19.20**
+- 官方安卓客户端 Sudodroid：**Sudodroid >= v0.2.0**
+
+### Android
+- **CMFA（Clash Meta for Android / Mihomo 内核）**：https://github.com/MetaCubeX/ClashMetaForAndroid
+- **Sudodroid（官方 Sudoku 客户端）**：https://github.com/saba-futai/sudoku-android
+
+### iOS
+- **Clash Mi（Mihomo 内核）**：https://github.com/KaringX/clashmi （App Store： https://apps.apple.com/us/app/clash-mi/id6744321968 ）
+
+### 桌面端（Windows/macOS/Linux）
+- **任意 Mihomo 内核的套壳 UI**（例如 Clash Verge Rev）：https://github.com/Clash-Verge-rev/clash-verge-rev
+
+### 软路由（OpenWrt）
+- **OpenClash**：https://github.com/vernesong/OpenClash
+
+### 一键安装脚本（服务端/工具）
+- https://github.com/SUDOKU-ASCII/easy-install
 
 
 ## 核心特性
@@ -50,11 +67,24 @@
 ### 防御性回落 (Fallback)
 当服务器检测到非法的握手请求、超时的连接或格式错误的数据包时，不直接断开连接，而是将连接无缝转发至指定的诱饵地址（如 Nginx 或 Apache 服务器）。探测者只会看到一个普通的网页服务器响应。
 
+#### 用作链式代理 / 端口复用
+Fallback 的主要价值不止是“回落到网页”，更常见的是把它当作**链式代理/中转**：用一个“外层 Sudoku 服务端”做入口（伪装/承压/抗探测），在握手判定失败时把连接转发到 `fallback_address`；而 `fallback_address` 指向的是**内层的另一个 Sudoku 服务端**，由它来接收并完成真实的 Sudoku 握手与转发。
+
+推荐搭法（两层 Sudoku）：
+1. **内层（真实）Sudoku 服务端**：监听一个内网端口（例如 `0.0.0.0:8443`），配置为你真正要用的与真实客户端配套的 `key` / `aead` / `httpmask` 等。
+2. **外层（入口）Sudoku 服务端**（跳板）：监听公网端口，并设置：
+   - `"suspicious_action": "fallback"`
+   - `"fallback_address": "x.x.x.x:8443"`（指向内层`ip:port`）
+   - `key` 填一个**不同于内层的“假 key”**（这样正常客户端连到外层时会握手失败，从而触发 fallback 中转到内层），或者相同的key不同的ascii偏好。
+3. **客户端**：`server_address` 填外层公网地址，但 `key` 使用**内层的真实 key**且与内层配套。
+
+这样客户端看起来“连的是外层”，但实际握手与数据通道都在内层完成；外层只负责在握手失败时把已读到的前缀字节按顺序重放给内层，然后做双向转发。
+（~~当然中间跳板也是完整的 sudoku 服务器~~）
+
 ### 缺点（TODO）
 1.  **数据包格式**: 原生 TCP，UDP 通过 UoT（UDP-over-TCP）隧道支持，暂不暴露原生 UDP 监听。
-2.  **带宽利用率**: 混淆会带来额外开销，可通过关闭 `enable_pure_downlink` 启用带宽优化下行来缓解下载场景。
-3.  **客户端代理**: 仅支持socks5/http。
-4.  **协议普及度**: 暂仅有官方和Mihomo支持，
+2.  **客户端代理**: 仅支持 socks5/http。无原生 TUN。
+3.  **协议普及度**: 暂仅有官方和 Mihomo 支持。
 
 
 
@@ -84,7 +114,14 @@ go build -o sudoku cmd/sudoku-tunnel/main.go
 ```bash
 docker build -t sudoku:local .
 ```
-运行（挂载你的配置）：
+运行（首次启动自动生成配置）：
+```bash
+docker run --rm -p 8080:8080 -p 8081:8081 -v sudoku-data:/etc/sudoku sudoku:local
+```
+
+容器在 `/etc/sudoku/server.config.json` / `/etc/sudoku/keys.env` 不存在时会自动生成，并在日志里输出客户端所需的私钥（`AVAILABLE_PRIVATE_KEY`）。
+
+如果你想自带配置，也可以直接挂载：
 ```bash
 docker run --rm -p 8080:8080 -p 8081:8081 -v "$PWD/server.config.json:/etc/sudoku/server.config.json:ro" sudoku:local
 ```
