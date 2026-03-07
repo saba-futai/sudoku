@@ -176,4 +176,4 @@ Run the program specifying a config path:
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=saba-futai/sudoku&type=Date)](https://star-history.com/#saba-futai/sudoku)
+[![Stargazers over time](https://starchart.cc/SUDOKU-ASCII/sudoku.svg?variant=adaptive)](https://starchart.cc/SUDOKU-ASCII/sudoku)

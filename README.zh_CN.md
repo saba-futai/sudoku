@@ -179,4 +179,4 @@ Split Private Key: 89acb9663cfd3bd04adf0001cc7000a8eb312903088b33a847d7e5cf102f1
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=saba-futai/sudoku&type=Date)](https://star-history.com/#saba-futai/sudoku)
+[![Stargazers over time](https://starchart.cc/SUDOKU-ASCII/sudoku.svg?variant=adaptive)](https://starchart.cc/SUDOKU-ASCII/sudoku)
