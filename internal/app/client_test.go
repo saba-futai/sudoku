@@ -29,10 +29,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saba-futai/sudoku/internal/config"
-	"github.com/saba-futai/sudoku/pkg/dnsutil"
-	"github.com/saba-futai/sudoku/pkg/geodata"
-	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
+	"github.com/SUDOKU-ASCII/sudoku/internal/config"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/dnsutil"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/geodata"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
 )
 
 // MockConn implements net.Conn for testing

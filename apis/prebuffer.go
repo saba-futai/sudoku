@@ -22,7 +22,7 @@ package apis
 import (
 	"net"
 
-	"github.com/saba-futai/sudoku/internal/tunnel"
+	"github.com/SUDOKU-ASCII/sudoku/internal/tunnel"
 )
 
 // NewPreBufferedConn returns a net.Conn that replays preRead before reading from conn.

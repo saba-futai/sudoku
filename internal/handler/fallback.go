@@ -25,8 +25,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/saba-futai/sudoku/internal/config"
-	"github.com/saba-futai/sudoku/pkg/logx"
+	"github.com/SUDOKU-ASCII/sudoku/internal/config"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/logx"
 )
 
 func writeFullConn(conn net.Conn, data []byte) error {

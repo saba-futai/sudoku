@@ -23,7 +23,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
 )
 
 // ProtocolConfig defines all parameters required by the Sudoku protocol stack.

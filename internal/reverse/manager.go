@@ -30,8 +30,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/saba-futai/sudoku/internal/config"
-	"github.com/saba-futai/sudoku/internal/tunnel"
+	"github.com/SUDOKU-ASCII/sudoku/internal/config"
+	"github.com/SUDOKU-ASCII/sudoku/internal/tunnel"
 )
 
 type Manager struct {

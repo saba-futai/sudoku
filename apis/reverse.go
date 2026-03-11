@@ -27,8 +27,8 @@ import (
 	"path"
 	"strings"
 
-	"github.com/saba-futai/sudoku/internal/config"
-	"github.com/saba-futai/sudoku/internal/reverse"
+	"github.com/SUDOKU-ASCII/sudoku/internal/config"
+	"github.com/SUDOKU-ASCII/sudoku/internal/reverse"
 )
 
 // ReverseRoute maps a public HTTP path prefix (or a raw TCP entry) to a client-side TCP target.

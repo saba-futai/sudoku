@@ -29,15 +29,15 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/saba-futai/sudoku/internal/config"
-	"github.com/saba-futai/sudoku/internal/handler"
-	"github.com/saba-futai/sudoku/internal/protocol"
-	"github.com/saba-futai/sudoku/internal/reverse"
-	"github.com/saba-futai/sudoku/internal/tunnel"
-	"github.com/saba-futai/sudoku/pkg/connutil"
-	"github.com/saba-futai/sudoku/pkg/logx"
-	"github.com/saba-futai/sudoku/pkg/obfs/httpmask"
-	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
+	"github.com/SUDOKU-ASCII/sudoku/internal/config"
+	"github.com/SUDOKU-ASCII/sudoku/internal/handler"
+	"github.com/SUDOKU-ASCII/sudoku/internal/protocol"
+	"github.com/SUDOKU-ASCII/sudoku/internal/reverse"
+	"github.com/SUDOKU-ASCII/sudoku/internal/tunnel"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/connutil"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/logx"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/httpmask"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
 )
 
 // logUserInfo logs an info message, prepending [User:hash] when userHash is non-empty.

@@ -22,7 +22,7 @@ package apis
 import (
 	"io"
 
-	"github.com/saba-futai/sudoku/internal/protocol"
+	"github.com/SUDOKU-ASCII/sudoku/internal/protocol"
 )
 
 // ReadTargetAddress parses a single SOCKS5-style target address frame (host:port) from r.

@@ -28,8 +28,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/saba-futai/sudoku/internal/protocol"
-	"github.com/saba-futai/sudoku/pkg/connutil"
+	"github.com/SUDOKU-ASCII/sudoku/internal/protocol"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/connutil"
 )
 
 // HandleMuxServer handles a multiplexed tunnel connection after the control plane has selected mux mode.

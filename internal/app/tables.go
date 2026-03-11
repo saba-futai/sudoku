@@ -22,8 +22,8 @@ package app
 import (
 	"strings"
 
-	"github.com/saba-futai/sudoku/internal/config"
-	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
+	"github.com/SUDOKU-ASCII/sudoku/internal/config"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
 )
 
 func BuildTables(cfg *config.Config) ([]*sudoku.Table, error) {

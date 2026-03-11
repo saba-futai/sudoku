@@ -22,7 +22,7 @@ package apis
 import (
 	"net"
 
-	"github.com/saba-futai/sudoku/internal/tunnel"
+	"github.com/SUDOKU-ASCII/sudoku/internal/tunnel"
 )
 
 // HandleMuxServer runs a "single tunnel, multi-target" mux session on an upgraded tunnel connection.

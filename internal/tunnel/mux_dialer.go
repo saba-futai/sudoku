@@ -25,7 +25,7 @@ import (
 	"net"
 	"sync"
 
-	"github.com/saba-futai/sudoku/internal/protocol"
+	"github.com/SUDOKU-ASCII/sudoku/internal/protocol"
 )
 
 // MuxDialer multiplexes multiple target connections over a single upgraded Sudoku tunnel.

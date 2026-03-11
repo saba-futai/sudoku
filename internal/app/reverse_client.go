@@ -22,10 +22,10 @@ package app
 import (
 	"time"
 
-	"github.com/saba-futai/sudoku/internal/config"
-	"github.com/saba-futai/sudoku/internal/reverse"
-	"github.com/saba-futai/sudoku/internal/tunnel"
-	"github.com/saba-futai/sudoku/pkg/logx"
+	"github.com/SUDOKU-ASCII/sudoku/internal/config"
+	"github.com/SUDOKU-ASCII/sudoku/internal/reverse"
+	"github.com/SUDOKU-ASCII/sudoku/internal/tunnel"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/logx"
 )
 
 func startReverseClient(cfg *config.Config, baseDialer *tunnel.BaseDialer) {

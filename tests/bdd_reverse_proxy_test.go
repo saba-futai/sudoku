@@ -33,8 +33,8 @@ import (
 	"time"
 
 	"github.com/coder/websocket"
-	"github.com/saba-futai/sudoku/internal/config"
-	"github.com/saba-futai/sudoku/internal/reverse"
+	"github.com/SUDOKU-ASCII/sudoku/internal/config"
+	"github.com/SUDOKU-ASCII/sudoku/internal/reverse"
 	"golang.org/x/crypto/ssh"
 )
 

@@ -25,12 +25,12 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/saba-futai/sudoku/internal/config"
-	"github.com/saba-futai/sudoku/internal/tunnel"
-	"github.com/saba-futai/sudoku/pkg/connutil"
-	"github.com/saba-futai/sudoku/pkg/dnsutil"
-	"github.com/saba-futai/sudoku/pkg/geodata"
-	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
+	"github.com/SUDOKU-ASCII/sudoku/internal/config"
+	"github.com/SUDOKU-ASCII/sudoku/internal/tunnel"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/connutil"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/dnsutil"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/geodata"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
 )
 
 func handleHTTP(conn net.Conn, cfg *config.Config, _ *sudoku.Table, geoMgr *geodata.Manager, dialer tunnel.Dialer, resolver *dnsutil.Resolver) {

@@ -9,11 +9,11 @@
 
 > Sudoku protocol is now supported by [Mihomo](https://github.com/MetaCubeX/mihomo) kernel!
 
-[![Build Status](https://img.shields.io/github/actions/workflow/status/saba-futai/sudoku/.github/workflows/release.yml?branch=main&style=for-the-badge)](https://github.com/saba-futai/sudoku/actions)
-[![Latest Release](https://img.shields.io/github/v/release/saba-futai/sudoku?style=for-the-badge)](https://github.com/saba-futai/sudoku/releases)
+[![Build Status](https://img.shields.io/github/actions/workflow/status/SUDOKU-ASCII/sudoku/.github/workflows/release.yml?branch=main&style=for-the-badge)](https://github.com/SUDOKU-ASCII/sudoku/actions)
+[![Latest Release](https://img.shields.io/github/v/release/SUDOKU-ASCII/sudoku?style=for-the-badge)](https://github.com/SUDOKU-ASCII/sudoku/releases)
 [![License](https://img.shields.io/badge/License-GPL%20v3-blue.svg?style=for-the-badge)](./LICENSE)
 
-[中文文档](https://github.com/saba-futai/sudoku/blob/main/README.zh_CN.md)
+[中文文档](https://github.com/SUDOKU-ASCII/sudoku/blob/main/README.zh_CN.md)
 
 
 **SUDOKU** is a traffic obfuscation protocol based on the creation and solving of 4x4 Sudoku puzzles. It maps arbitrary data streams (data bytes have at most 256 possibilities, while non-isomorphic 4x4 Sudokus have 288 variants) into uniquely solvable Sudoku puzzles based on 4 Clues. Since each Puzzle has more than one setting scheme, the random selection process results in multiple combinations for the same encoded data, generating obfuscation.
@@ -28,7 +28,7 @@ Version requirements:
 
 ### Android
 - **CMFA (Clash Meta for Android / Mihomo kernel)**: https://github.com/MetaCubeX/ClashMetaForAndroid
-- **Sudodroid (official Sudoku client)**: https://github.com/saba-futai/sudoku-android
+- **Sudodroid (official Sudoku client)**: https://github.com/SUDOKU-ASCII/sudoku-android
 
 ### iOS
 - **Clash Mi (Mihomo kernel)**: https://github.com/KaringX/clashmi (App Store: https://apps.apple.com/us/app/clash-mi/id6744321968)

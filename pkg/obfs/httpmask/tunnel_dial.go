@@ -34,7 +34,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/saba-futai/sudoku/pkg/dnsutil"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/dnsutil"
 )
 
 const (

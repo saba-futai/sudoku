@@ -29,7 +29,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saba-futai/sudoku/pkg/connutil"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/connutil"
 )
 
 func TestRecordConn_KeyUpdate_FullDuplex(t *testing.T) {

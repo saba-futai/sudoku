@@ -24,7 +24,7 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/saba-futai/sudoku/internal/protocol"
+	"github.com/SUDOKU-ASCII/sudoku/internal/protocol"
 )
 
 func writeKIPOpenTCP(conn net.Conn, addr string) error {

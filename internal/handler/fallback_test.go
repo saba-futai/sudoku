@@ -25,7 +25,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saba-futai/sudoku/internal/config"
+	"github.com/SUDOKU-ASCII/sudoku/internal/config"
 )
 
 type recordedConn struct {

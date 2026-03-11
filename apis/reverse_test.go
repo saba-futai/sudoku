@@ -30,7 +30,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
 )
 
 func TestReverseProxySession(t *testing.T) {

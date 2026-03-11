@@ -25,7 +25,7 @@ import (
 	"io"
 	"net"
 
-	"github.com/saba-futai/sudoku/internal/tunnel"
+	"github.com/SUDOKU-ASCII/sudoku/internal/tunnel"
 )
 
 // DialUDPOverTCP bootstraps a UDP-over-TCP tunnel using the standard Dial flow.

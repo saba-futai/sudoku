@@ -29,12 +29,12 @@ import (
 	"net"
 	"strings"
 
-	"github.com/saba-futai/sudoku/internal/protocol"
-	"github.com/saba-futai/sudoku/internal/tunnel"
-	"github.com/saba-futai/sudoku/pkg/crypto"
-	"github.com/saba-futai/sudoku/pkg/dnsutil"
-	"github.com/saba-futai/sudoku/pkg/obfs/httpmask"
-	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
+	"github.com/SUDOKU-ASCII/sudoku/internal/protocol"
+	"github.com/SUDOKU-ASCII/sudoku/internal/tunnel"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/crypto"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/dnsutil"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/httpmask"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
 )
 
 func canonicalCryptoSeedKey(key string) string {

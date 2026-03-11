@@ -34,11 +34,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/saba-futai/sudoku/apis"
-	"github.com/saba-futai/sudoku/internal/tunnel"
-	"github.com/saba-futai/sudoku/pkg/crypto"
-	"github.com/saba-futai/sudoku/pkg/obfs/httpmask"
-	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
+	"github.com/SUDOKU-ASCII/sudoku/apis"
+	"github.com/SUDOKU-ASCII/sudoku/internal/tunnel"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/crypto"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/httpmask"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
 )
 
 var (

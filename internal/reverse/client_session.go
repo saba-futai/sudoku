@@ -26,8 +26,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/saba-futai/sudoku/internal/config"
-	"github.com/saba-futai/sudoku/internal/tunnel"
+	"github.com/SUDOKU-ASCII/sudoku/internal/config"
+	"github.com/SUDOKU-ASCII/sudoku/internal/tunnel"
 )
 
 // ServeClientSession registers routes to the server and serves reverse mux streams until the session ends.

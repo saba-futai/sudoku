@@ -28,8 +28,8 @@ import (
 	"path"
 	"strings"
 
-	"github.com/saba-futai/sudoku/internal/config"
-	"github.com/saba-futai/sudoku/internal/tunnel"
+	"github.com/SUDOKU-ASCII/sudoku/internal/config"
+	"github.com/SUDOKU-ASCII/sudoku/internal/tunnel"
 )
 
 const maxHelloBytes = 64 * 1024

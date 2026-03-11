@@ -26,7 +26,7 @@ import (
 	"strings"
 	"sync"
 
-	"github.com/saba-futai/sudoku/internal/tunnel"
+	"github.com/SUDOKU-ASCII/sudoku/internal/tunnel"
 )
 
 // MuxClient opens multiple target connections over a single Sudoku tunnel (single tunnel, multi-target).

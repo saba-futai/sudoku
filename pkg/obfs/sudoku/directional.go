@@ -23,7 +23,7 @@ import (
 	"io"
 	"net"
 
-	"github.com/saba-futai/sudoku/pkg/connutil"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/connutil"
 )
 
 // DirectionalConn wires separate reader/writer streams onto a single net.Conn.

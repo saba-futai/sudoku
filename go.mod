@@ -1,4 +1,4 @@
-module github.com/saba-futai/sudoku
+module github.com/SUDOKU-ASCII/sudoku
 
 go 1.26.0
 

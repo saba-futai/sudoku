@@ -23,8 +23,8 @@ import (
 	"net"
 	"strings"
 
-	"github.com/saba-futai/sudoku/internal/tunnel"
-	"github.com/saba-futai/sudoku/pkg/obfs/httpmask"
+	"github.com/SUDOKU-ASCII/sudoku/internal/tunnel"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/httpmask"
 )
 
 // HTTPMaskTunnelServer bridges raw TCP accepts with the optional CDN-capable HTTP tunnel transports (stream/poll).

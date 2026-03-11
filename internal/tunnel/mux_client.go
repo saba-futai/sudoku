@@ -25,7 +25,7 @@ import (
 	"io"
 	"net"
 
-	"github.com/saba-futai/sudoku/internal/protocol"
+	"github.com/SUDOKU-ASCII/sudoku/internal/protocol"
 )
 
 // MuxClient opens multiple target streams over an already-upgraded Sudoku tunnel connection.

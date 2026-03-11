@@ -31,7 +31,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saba-futai/sudoku/internal/config"
+	"github.com/SUDOKU-ASCII/sudoku/internal/config"
 )
 
 func waitForAddr(t testing.TB, addr string) {

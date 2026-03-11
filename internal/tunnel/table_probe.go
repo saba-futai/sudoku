@@ -25,7 +25,7 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
 )
 
 // TableProbeFunc returns nil when the current probe bytes are sufficient to identify table as a match.

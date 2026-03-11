@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saba-futai/sudoku/internal/app"
-	"github.com/saba-futai/sudoku/internal/config"
-	"github.com/saba-futai/sudoku/pkg/crypto"
+	"github.com/SUDOKU-ASCII/sudoku/internal/app"
+	"github.com/SUDOKU-ASCII/sudoku/internal/config"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/crypto"
 )
 
 func TestAppProxyHTTPMaskAutoPathRoot(t *testing.T) {

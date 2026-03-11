@@ -33,7 +33,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saba-futai/sudoku/internal/config"
+	"github.com/SUDOKU-ASCII/sudoku/internal/config"
 )
 
 func TestHTTPProxy_Multiplex_LargeDownloads(t *testing.T) {

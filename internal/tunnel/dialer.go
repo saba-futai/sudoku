@@ -27,10 +27,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/saba-futai/sudoku/internal/config"
-	"github.com/saba-futai/sudoku/pkg/dnsutil"
-	"github.com/saba-futai/sudoku/pkg/obfs/httpmask"
-	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
+	"github.com/SUDOKU-ASCII/sudoku/internal/config"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/dnsutil"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/httpmask"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
 )
 
 // Dialer abstracts the logic for establishing a connection to the server.

@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saba-futai/sudoku/apis"
+	"github.com/SUDOKU-ASCII/sudoku/apis"
 )
 
 func TestMatrixSmoke(t *testing.T) {

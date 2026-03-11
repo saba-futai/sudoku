@@ -18,7 +18,7 @@
 1) 直接下载：从 GitHub Releases 页面获取与你平台匹配的压缩包并解压出 `sudoku` 可执行文件。
 2) 自行编译：
 ```bash
-git clone https://github.com/saba-futai/sudoku.git
+git clone https://github.com/SUDOKU-ASCII/sudoku.git
 cd sudoku
 go build -o sudoku ./cmd/sudoku-tunnel
 ```

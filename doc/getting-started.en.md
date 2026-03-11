@@ -18,7 +18,7 @@ Pick one:
 1) Download the prebuilt archive from GitHub Releases and extract the `sudoku` executable.
 2) Build locally:
 ```bash
-git clone https://github.com/saba-futai/sudoku.git
+git clone https://github.com/SUDOKU-ASCII/sudoku.git
 cd sudoku
 go build -o sudoku ./cmd/sudoku-tunnel
 ```

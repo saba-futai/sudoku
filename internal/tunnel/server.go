@@ -30,11 +30,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/saba-futai/sudoku/internal/config"
-	"github.com/saba-futai/sudoku/pkg/connutil"
-	"github.com/saba-futai/sudoku/pkg/crypto"
-	"github.com/saba-futai/sudoku/pkg/obfs/httpmask"
-	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
+	"github.com/SUDOKU-ASCII/sudoku/internal/config"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/connutil"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/crypto"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/httpmask"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
 )
 
 const (

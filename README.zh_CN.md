@@ -7,8 +7,8 @@
 
 > Sudoku 协议目前已被 [Mihomo](https://github.com/MetaCubeX/mihomo) 内核支持！
 
-[![构建状态](https://img.shields.io/github/actions/workflow/status/saba-futai/sudoku/.github/workflows/release.yml?branch=main&style=for-the-badge)](https://github.com/saba-futai/sudoku/actions)
-[![最新版本](https://img.shields.io/github/v/release/saba-futai/sudoku?style=for-the-badge)](https://github.com/saba-futai/sudoku/releases)
+[![构建状态](https://img.shields.io/github/actions/workflow/status/SUDOKU-ASCII/sudoku/.github/workflows/release.yml?branch=main&style=for-the-badge)](https://github.com/SUDOKU-ASCII/sudoku/actions)
+[![最新版本](https://img.shields.io/github/v/release/SUDOKU-ASCII/sudoku?style=for-the-badge)](https://github.com/SUDOKU-ASCII/sudoku/releases)
 [![License](https://img.shields.io/badge/License-GPL%20v3-blue.svg?style=for-the-badge)](./LICENSE)
 
 **SUDOKU** 是一个基于4x4数独设题解题的流量混淆协议。它通过将任意数据流（数据字节最多有256种可能，4x4数独的非同构体有288种）映射为以4个Clue为题目的唯一可解数独谜题，每种Puzzle有不少于一种的设题方案，随机选择的过程使得同一数据编码后有多种组合，产生了混淆性。
@@ -25,7 +25,7 @@
 
 ### Android
 - **CMFA（Clash Meta for Android / Mihomo 内核）**：https://github.com/MetaCubeX/ClashMetaForAndroid
-- **Sudodroid（官方 Sudoku 客户端）**：https://github.com/saba-futai/sudoku-android
+- **Sudodroid（官方 Sudoku 客户端）**：https://github.com/SUDOKU-ASCII/sudoku-android
 
 ### iOS
 - **Clash Mi（Mihomo 内核）**：https://github.com/KaringX/clashmi （App Store： https://apps.apple.com/us/app/clash-mi/id6744321968 ）

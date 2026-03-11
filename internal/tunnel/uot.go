@@ -27,8 +27,8 @@ import (
 	"net"
 	"sync"
 
-	"github.com/saba-futai/sudoku/internal/protocol"
-	"github.com/saba-futai/sudoku/pkg/connutil"
+	"github.com/SUDOKU-ASCII/sudoku/internal/protocol"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/connutil"
 )
 
 const (

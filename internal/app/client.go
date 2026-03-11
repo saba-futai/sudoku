@@ -29,14 +29,14 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/saba-futai/sudoku/internal/config"
-	"github.com/saba-futai/sudoku/internal/tunnel"
-	"github.com/saba-futai/sudoku/pkg/connutil"
-	"github.com/saba-futai/sudoku/pkg/crypto"
-	"github.com/saba-futai/sudoku/pkg/dnsutil"
-	"github.com/saba-futai/sudoku/pkg/geodata"
-	"github.com/saba-futai/sudoku/pkg/logx"
-	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
+	"github.com/SUDOKU-ASCII/sudoku/internal/config"
+	"github.com/SUDOKU-ASCII/sudoku/internal/tunnel"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/connutil"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/crypto"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/dnsutil"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/geodata"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/logx"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
 )
 
 type PeekConn struct {

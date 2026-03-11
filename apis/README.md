@@ -3,8 +3,8 @@
 面向其他开发者开放的纯 Sudoku 协议 API：HTTP 伪装 + 数独 ASCII/Entropy 混淆 + AEAD 加密。支持带宽优化下行（`enable_pure_downlink=false`）与 UoT（UDP over TCP）。
 
 ## 安装
-- 推荐指定已有 tag：`go get github.com/saba-futai/sudoku@v0.2.0`
-- 或者直接跟随最新提交：`go get github.com/saba-futai/sudoku`
+- 推荐指定已有 tag：`go get github.com/SUDOKU-ASCII/sudoku@v0.2.0`
+- 或者直接跟随最新提交：`go get github.com/SUDOKU-ASCII/sudoku`
 
 ## 配置要点
 - 表格：`sudoku.NewTable("your-seed", "prefer_ascii"|"prefer_entropy")` 或 `sudoku.NewTableWithCustom("seed", "prefer_entropy", "xpxvvpvv")`（2 个 `x`、2 个 `p`、4 个 `v`，ASCII 优先）。
@@ -23,8 +23,8 @@ import (
 	"log"
 	"time"
 
-	"github.com/saba-futai/sudoku/apis"
-	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
+	"github.com/SUDOKU-ASCII/sudoku/apis"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
 )
 
 func main() {
@@ -65,8 +65,8 @@ import (
 	"log"
 	"net"
 
-	"github.com/saba-futai/sudoku/apis"
-	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
+	"github.com/SUDOKU-ASCII/sudoku/apis"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
 )
 
 func main() {

@@ -25,8 +25,8 @@ import (
 	"net"
 	"testing"
 
-	"github.com/saba-futai/sudoku/apis"
-	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
+	"github.com/SUDOKU-ASCII/sudoku/apis"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
 )
 
 func TestHTTPMaskSwitch(t *testing.T) {

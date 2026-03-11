@@ -25,8 +25,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/saba-futai/sudoku/apis"
-	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
+	"github.com/SUDOKU-ASCII/sudoku/apis"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
 )
 
 func BenchmarkHTTPMaskTunnel_Stream(b *testing.B) {

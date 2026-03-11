@@ -28,8 +28,8 @@ import (
 	"sync"
 	"time"
 
-	"github.com/saba-futai/sudoku/internal/tunnel"
-	"github.com/saba-futai/sudoku/pkg/obfs/httpmask"
+	"github.com/SUDOKU-ASCII/sudoku/internal/tunnel"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/httpmask"
 )
 
 // ServeEntry serves both:

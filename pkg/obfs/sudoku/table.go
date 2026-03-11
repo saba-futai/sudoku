@@ -26,7 +26,7 @@ import (
 	"math/rand"
 	"time"
 
-	"github.com/saba-futai/sudoku/pkg/logx"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/logx"
 )
 
 var (

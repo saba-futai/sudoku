@@ -24,8 +24,8 @@ import (
 	"fmt"
 	"net"
 
-	"github.com/saba-futai/sudoku/internal/protocol"
-	"github.com/saba-futai/sudoku/internal/tunnel"
+	"github.com/SUDOKU-ASCII/sudoku/internal/protocol"
+	"github.com/SUDOKU-ASCII/sudoku/internal/tunnel"
 )
 
 // SessionKind describes the payload type carried by a Sudoku tunnel connection after the handshake.
