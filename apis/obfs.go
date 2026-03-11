@@ -22,7 +22,7 @@ package apis
 import (
 	"net"
 
-	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
+	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
 )
 
 const (

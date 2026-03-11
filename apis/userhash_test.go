@@ -27,7 +27,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
+	"github.com/saba-futai/sudoku/pkg/obfs/sudoku"
 )
 
 func TestUserHash_StableAcrossTableRotation(t *testing.T) {

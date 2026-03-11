@@ -25,7 +25,7 @@ import (
 	"net"
 	"testing"
 
-	"github.com/SUDOKU-ASCII/sudoku/internal/config"
+	"github.com/saba-futai/sudoku/internal/config"
 	"golang.org/x/crypto/ssh"
 )
 

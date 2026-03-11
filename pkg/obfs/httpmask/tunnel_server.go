@@ -37,7 +37,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/SUDOKU-ASCII/sudoku/pkg/connutil"
+	"github.com/saba-futai/sudoku/pkg/connutil"
 )
 
 type TunnelServerOptions struct {

@@ -31,7 +31,7 @@ import (
 	"io"
 	"net"
 
-	"github.com/SUDOKU-ASCII/sudoku/pkg/connutil"
+	"github.com/saba-futai/sudoku/pkg/connutil"
 
 	"golang.org/x/crypto/chacha20poly1305"
 )

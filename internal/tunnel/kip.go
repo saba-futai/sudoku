@@ -30,7 +30,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/SUDOKU-ASCII/sudoku/pkg/connutil"
+	"github.com/saba-futai/sudoku/pkg/connutil"
 )
 
 const (
