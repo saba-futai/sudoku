@@ -3,6 +3,11 @@
 ## Unreleased
 - TBD
 
+## v0.3.4（2026-03-12）
+- `cleanup`: 删除仓库内已不再使用的旧 `AEADConn` 实现及其测试，统一收敛到当前记录层 `RecordConn` 路径，减少重复加密封装。
+- `cleanup`: 移除内部未使用的握手包装函数、下行模式辅助函数与 HTTPMask 认证辅助死代码，收紧实现表面并降低维护噪音。
+- `tests`: 清理未引用的中间人测试辅助逻辑，保持测试代码与当前覆盖路径一致。
+
 ## v0.3.3（2026-03-10）
 - `httpmask`: 将 KIP 握手折叠进首个 HTTP/WS 往返，消除启用 `httpmask` 时相对关闭状态多出的 1 RTT，同时保持抓包仍为 HTTP/WS、认证与 CDN 兼容路径不变。
 - `httpmask`: 新增统一的 early-handshake 构建逻辑，收敛 client/server 在 `apis`、CLI 与测试入口的重复实现，降低后续维护成本。

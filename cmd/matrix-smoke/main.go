@@ -235,10 +235,6 @@ func proxyBidirectional(a, b net.Conn) {
 	_ = b.Close()
 }
 
-func handleFallback(rawConn net.Conn, fallbackAddr string, replayPrefix []byte) {
-	handleFallbackWithVerbose(rawConn, fallbackAddr, replayPrefix, *flagVerbose)
-}
-
 func handleFallbackWithVerbose(rawConn net.Conn, fallbackAddr string, replayPrefix []byte, verbose bool) {
 	if rawConn == nil {
 		return

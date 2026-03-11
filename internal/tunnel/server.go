@@ -146,11 +146,6 @@ func (e *SuspiciousError) Error() string {
 	return e.Err.Error()
 }
 
-// HandshakeAndUpgrade wraps the raw connection with Sudoku/Crypto and performs handshake.
-func HandshakeAndUpgrade(rawConn net.Conn, cfg *config.Config, table *sudoku.Table) (net.Conn, error) {
-	return HandshakeAndUpgradeWithTables(rawConn, cfg, []*sudoku.Table{table})
-}
-
 // HandshakeMeta carries optional, per-connection identity hints extracted from the client handshake.
 //
 // UserHash is a hex-encoded 8-byte value derived from the client's private key (when the client uses one):
@@ -239,13 +234,6 @@ func probeHandshakeBytes(probe []byte, cfg *config.Config, table *sudoku.Table) 
 		return fmt.Errorf("time skew/replay")
 	}
 	return nil
-}
-
-// HandshakeAndUpgradeWithTables performs the handshake by probing one of multiple tables.
-// This enables per-connection table rotation without adding a plaintext table selector.
-func HandshakeAndUpgradeWithTables(rawConn net.Conn, cfg *config.Config, tables []*sudoku.Table) (net.Conn, error) {
-	conn, _, err := HandshakeAndUpgradeWithTablesMeta(rawConn, cfg, tables)
-	return conn, err
 }
 
 // HandshakeAndUpgradeWithTablesMeta is like HandshakeAndUpgradeWithTables but also returns handshake metadata

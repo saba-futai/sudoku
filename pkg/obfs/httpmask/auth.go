@@ -75,17 +75,6 @@ func (a *tunnelAuth) token(mode TunnelMode, method, path string, now time.Time) 
 	return base64.RawURLEncoding.EncodeToString(buf[:])
 }
 
-func (a *tunnelAuth) verify(headers map[string]string, mode TunnelMode, method, path string, now time.Time) bool {
-	if a == nil {
-		return true
-	}
-	if headers == nil {
-		return false
-	}
-
-	return a.verifyValue(headers["authorization"], mode, method, path, now)
-}
-
 func (a *tunnelAuth) verifyValue(val string, mode TunnelMode, method, path string, now time.Time) bool {
 	if a == nil {
 		return true
@@ -149,19 +138,6 @@ func (a *tunnelAuth) sign(mode TunnelMode, method, path string, ts int64) [16]by
 	copy(out[:], full[:16])
 	return out
 }
-
-func applyTunnelAuthHeader(h httpHeaderSetter, auth *tunnelAuth, mode TunnelMode, method, path string) {
-	if auth == nil || h == nil {
-		return
-	}
-	token := auth.token(mode, method, path, time.Now())
-	if token == "" {
-		return
-	}
-	h.Set(tunnelAuthHeaderKey, tunnelAuthHeaderPrefix+token)
-}
-
-type httpHeaderSetter = http.Header
 
 func applyTunnelAuth(req *http.Request, auth *tunnelAuth, mode TunnelMode, method, path string) {
 	if auth == nil || req == nil {

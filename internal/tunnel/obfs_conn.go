@@ -31,13 +31,6 @@ const (
 	DownlinkModePacked byte = 0x02
 )
 
-func downlinkModeByte(cfg *config.Config) byte {
-	if cfg.EnablePureDownlink {
-		return DownlinkModePure
-	}
-	return DownlinkModePacked
-}
-
 // buildObfsConnForClient builds the obfuscation layer for client side, keeping Sudoku on uplink.
 func buildObfsConnForClient(raw net.Conn, table *sudoku.Table, cfg *config.Config) net.Conn {
 	baseSudoku := sudoku.NewConn(raw, table, cfg.PaddingMin, cfg.PaddingMax, false)

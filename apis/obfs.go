@@ -30,13 +30,6 @@ const (
 	downlinkModePacked byte = 0x02
 )
 
-func downlinkMode(cfg *ProtocolConfig) byte {
-	if cfg.EnablePureDownlink {
-		return downlinkModePure
-	}
-	return downlinkModePacked
-}
-
 func buildClientObfsConn(raw net.Conn, cfg *ProtocolConfig, table *sudoku.Table) net.Conn {
 	base := sudoku.NewConn(raw, table, cfg.PaddingMin, cfg.PaddingMax, false)
 	if cfg.EnablePureDownlink {
