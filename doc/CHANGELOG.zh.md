@@ -3,6 +3,11 @@
 ## Unreleased
 - TBD
 
+## v0.3.6（2026-03-15）
+- `client/lb`: 客户端新增多节点负载均衡：`-c` / `-link` 支持多值同时生效，mixed 监听端口固定取首个配置的 `local_port`，同站点目标按 Rendezvous Hashing 粘性选路，并在节点失败时按次优节点回退。
+- `cli`: 交互式 setup wizard 与客户端配置装配逻辑迁移到独立 `internal/cli`，入口职责更清晰；新增 `internal/cliutil` 复用多值 flag 解析，减少 `cmd/sudoku-tunnel` 主入口样板代码。
+- `tests`: 将 CLI flag、负载均衡与原 `cmd/matrix-smoke` 的 HTTPMask 冒烟场景统一迁入 `tests/`，减少重复测试代码并保持全量回归覆盖。
+
 ## v0.3.4（2026-03-12）
 - `cleanup`: 删除仓库内已不再使用的旧 `AEADConn` 实现及其测试，统一收敛到当前记录层 `RecordConn` 路径，减少重复加密封装。
 - `cleanup`: 移除内部未使用的握手包装函数、下行模式辅助函数与 HTTPMask 认证辅助死代码，收紧实现表面并降低维护噪音。
