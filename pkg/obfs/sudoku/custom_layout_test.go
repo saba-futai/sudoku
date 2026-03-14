@@ -101,7 +101,6 @@ func TestCustomLayoutPackedRoundTrip(t *testing.T) {
 	}
 
 	c1, c2 := net.Pipe()
-	defer c1.Close()
 	defer c2.Close()
 
 	writer := NewPackedConn(c1, table, 0, 0)
@@ -110,6 +109,8 @@ func TestCustomLayoutPackedRoundTrip(t *testing.T) {
 	payload := bytes.Repeat([]byte{0xAB, 0xCD, 0xEF, 0x01}, 8192)
 	done := make(chan error, 1)
 	go func() {
+		defer c1.Close()
+
 		if _, err := writer.Write(payload); err != nil {
 			done <- err
 			return
@@ -120,6 +121,9 @@ func TestCustomLayoutPackedRoundTrip(t *testing.T) {
 	buf := make([]byte, len(payload))
 	if _, err := io.ReadFull(reader, buf); err != nil {
 		t.Fatalf("read failed: %v", err)
+	}
+	if _, err := io.Copy(io.Discard, reader); err != nil {
+		t.Fatalf("drain failed: %v", err)
 	}
 	if err := <-done; err != nil {
 		t.Fatalf("write/flush failed: %v", err)
@@ -145,7 +149,6 @@ func TestCustomLayoutPackedStress(t *testing.T) {
 	}
 
 	c1, c2 := net.Pipe()
-	defer c1.Close()
 	defer c2.Close()
 
 	writer := NewPackedConn(c1, table, 2, 4)
@@ -154,6 +157,8 @@ func TestCustomLayoutPackedStress(t *testing.T) {
 	payload := bytes.Repeat([]byte{0xFF, 0x00, 0x7F, 0x11, 0x22}, 20000) // ~100KB stress payload
 	done := make(chan error, 1)
 	go func() {
+		defer c1.Close()
+
 		if _, err := writer.Write(payload); err != nil {
 			done <- err
 			return
@@ -164,6 +169,9 @@ func TestCustomLayoutPackedStress(t *testing.T) {
 	buf := make([]byte, len(payload))
 	if _, err := io.ReadFull(reader, buf); err != nil {
 		t.Fatalf("read failed: %v", err)
+	}
+	if _, err := io.Copy(io.Discard, reader); err != nil {
+		t.Fatalf("drain failed: %v", err)
 	}
 	if err := <-done; err != nil {
 		t.Fatalf("write/flush failed: %v", err)

@@ -26,8 +26,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/coder/websocket"
 	"github.com/SUDOKU-ASCII/sudoku/internal/config"
+	"github.com/coder/websocket"
 	"golang.org/x/crypto/ssh"
 )
 

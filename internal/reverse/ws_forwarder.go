@@ -30,9 +30,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coder/websocket"
 	"github.com/SUDOKU-ASCII/sudoku/internal/tunnel"
 	"github.com/SUDOKU-ASCII/sudoku/pkg/logx"
+	"github.com/coder/websocket"
 )
 
 // ServeLocalWSForward listens on listenAddr and forwards each accepted TCP connection through

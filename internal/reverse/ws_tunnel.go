@@ -23,8 +23,8 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/coder/websocket"
 	"github.com/SUDOKU-ASCII/sudoku/internal/tunnel"
+	"github.com/coder/websocket"
 )
 
 const sudokuTCPSubprotocol = "sudoku-tcp-v1"

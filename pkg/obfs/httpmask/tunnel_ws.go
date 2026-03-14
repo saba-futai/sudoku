@@ -32,8 +32,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/coder/websocket"
 	"github.com/SUDOKU-ASCII/sudoku/pkg/dnsutil"
+	"github.com/coder/websocket"
 )
 
 func normalizeWSSchemeFromAddress(serverAddress string, tlsEnabled bool) (string, string) {
