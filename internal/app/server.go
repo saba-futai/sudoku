@@ -144,8 +144,9 @@ func handleServerConn(rawConn net.Conn, cfg *config.Config, tables []*sudoku.Tab
 			return
 		case httpmask.HandlePassThrough:
 			if r, ok := c.(interface{ IsHTTPMaskRejected() bool }); ok && r.IsHTTPMaskRejected() {
-				// Use the pass-through conn for fallback proxying so any replay prefix is preserved.
-				handler.HandleSuspicious(c, c, cfg)
+				// Replay the rejected HTTPMask prefix once, then continue streaming from the raw TCP conn.
+				// Passing the replay wrapper as both arguments would duplicate the prefix on fallback.
+				handler.HandleSuspicious(c, rawConn, cfg)
 				return
 			}
 			handleSudokuServerConn(c, rawConn, cfg, tables, true, revMgr)
