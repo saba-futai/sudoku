@@ -98,16 +98,7 @@ func (o Options) Normalized() Options {
 			srv.Type = normalizeServerType(srv.Type)
 			srv.Address = strings.TrimSpace(srv.Address)
 			srv.Path = normalizeHTTPSPath(srv.Path)
-			if len(srv.Bootstrap) > 0 {
-				boots := srv.Bootstrap[:0]
-				for _, ip := range srv.Bootstrap {
-					ip = strings.TrimSpace(ip)
-					if ip != "" {
-						boots = append(boots, ip)
-					}
-				}
-				srv.Bootstrap = boots
-			}
+			srv.Bootstrap = normalizeBootstrapAddrs(srv.Bootstrap)
 			if len(srv.Headers) > 0 {
 				headers := make(map[string]string, len(srv.Headers))
 				for k, v := range srv.Headers {
@@ -164,6 +155,8 @@ func normalizeServerType(serverType string) string {
 		return "local"
 	case "https", "doh":
 		return "https"
+	case "tls", "dot":
+		return "dot"
 	default:
 		return strings.ToLower(strings.TrimSpace(serverType))
 	}
@@ -191,15 +184,41 @@ func validateServerOptions(srv ServerOptions) error {
 		if _, _, _, err := parseHTTPSEndpoint(srv.Address, srv.Path); err != nil {
 			return err
 		}
-		for _, ip := range srv.Bootstrap {
-			if parsed := net.ParseIP(strings.TrimSpace(ip)); parsed == nil {
-				return fmt.Errorf("invalid bootstrap ip %q", ip)
-			}
+		return validateBootstrapAddrs(srv.Bootstrap)
+	case "dot":
+		if strings.TrimSpace(srv.Address) == "" {
+			return fmt.Errorf("dot server requires address")
 		}
-		return nil
+		if _, _, err := parseTLSEndpoint(srv.Address); err != nil {
+			return err
+		}
+		return validateBootstrapAddrs(srv.Bootstrap)
 	default:
 		return fmt.Errorf("unsupported dns server type %q", srv.Type)
 	}
+}
+
+func normalizeBootstrapAddrs(addrs []string) []string {
+	if len(addrs) == 0 {
+		return nil
+	}
+	out := addrs[:0]
+	for _, addr := range addrs {
+		addr = strings.TrimSpace(addr)
+		if addr != "" {
+			out = append(out, addr)
+		}
+	}
+	return out
+}
+
+func validateBootstrapAddrs(addrs []string) error {
+	for _, addr := range addrs {
+		if parsed := net.ParseIP(strings.TrimSpace(addr)); parsed == nil {
+			return fmt.Errorf("invalid bootstrap ip %q", addr)
+		}
+	}
+	return nil
 }
 
 func parseHTTPSEndpoint(address string, path string) (host string, port string, reqPath string, err error) {

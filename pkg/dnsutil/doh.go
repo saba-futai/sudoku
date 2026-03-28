@@ -52,12 +52,7 @@ func newHTTPSNameServer(srv ServerOptions, timeout time.Duration) (*httpsNameSer
 	if err != nil {
 		return nil, err
 	}
-	bootstrap := make([]string, 0, len(srv.Bootstrap))
-	for _, ip := range srv.Bootstrap {
-		if parsed := net.ParseIP(strings.TrimSpace(ip)); parsed != nil {
-			bootstrap = append(bootstrap, parsed.String())
-		}
-	}
+	bootstrap := normalizeBootstrapAddrs(srv.Bootstrap)
 	ns := &httpsNameServer{
 		host:      host,
 		port:      port,

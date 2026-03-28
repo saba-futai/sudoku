@@ -379,6 +379,12 @@ func buildNameServers(opts Options) ([]nameServer, error) {
 				return nil, err
 			}
 			servers = append(servers, ns)
+		case "dot":
+			ns, err := newTLSNameServer(srv, opts.timeout())
+			if err != nil {
+				return nil, err
+			}
+			servers = append(servers, ns)
 		default:
 			return nil, fmt.Errorf("unsupported dns server type %q", srv.Type)
 		}

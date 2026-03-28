@@ -11,7 +11,32 @@ import (
 	"github.com/SUDOKU-ASCII/sudoku/internal/config"
 )
 
-func TestFallbackChain_AllowsHTTPMaskClientToReachInnerServer(t *testing.T) {
+type fallbackChainCase struct {
+	name       string
+	httpMode   string
+	rejectKind string
+}
+
+func TestFallbackChain_AllowsHTTPMaskClientsAcrossModes(t *testing.T) {
+	cases := []fallbackChainCase{
+		{name: "ws_auth_reject", httpMode: "ws", rejectKind: "auth"},
+		{name: "ws_early_reject", httpMode: "ws", rejectKind: "early"},
+		{name: "auto_auth_reject", httpMode: "auto", rejectKind: "auth"},
+		{name: "auto_early_reject", httpMode: "auto", rejectKind: "early"},
+		{name: "poll_auth_reject", httpMode: "poll", rejectKind: "auth"},
+		{name: "poll_early_reject", httpMode: "poll", rejectKind: "early"},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			runHTTPMaskFallbackChainCase(t, tc)
+		})
+	}
+}
+
+func runHTTPMaskFallbackChainCase(t *testing.T, tc fallbackChainCase) {
+	t.Helper()
+
 	ports, err := getFreePorts(4)
 	if err != nil {
 		t.Fatalf("get free ports: %v", err)
@@ -26,12 +51,28 @@ func TestFallbackChain_AllowsHTTPMaskClientToReachInnerServer(t *testing.T) {
 	}
 	waitForPort(t, echoPort)
 
-	pathRoot := "chainmask"
+	pathRoot := fmt.Sprintf("chain-%s", tc.name)
+	innerKey := "inner-chain-key"
+	outerKey := innerKey
+	outerAEAD := testAEAD
+	outerASCII := testASCII
+	outerTable := testCustomTable
+
+	switch tc.rejectKind {
+	case "auth":
+		outerKey = "outer-chain-key"
+	case "early":
+		outerAEAD = "aes-128-gcm"
+		outerASCII = "prefer_entropy"
+		outerTable = "vpxxvpvv"
+	default:
+		t.Fatalf("unknown rejectKind: %s", tc.rejectKind)
+	}
 
 	innerCfg := &config.Config{
 		Mode:               "server",
 		LocalPort:          innerPort,
-		Key:                "inner-chain-key",
+		Key:                innerKey,
 		AEAD:               testAEAD,
 		ASCII:              testASCII,
 		CustomTable:        testCustomTable,
@@ -39,7 +80,7 @@ func TestFallbackChain_AllowsHTTPMaskClientToReachInnerServer(t *testing.T) {
 		SuspiciousAction:   "fallback",
 		HTTPMask: config.HTTPMaskConfig{
 			Disable:  false,
-			Mode:     "ws",
+			Mode:     tc.httpMode,
 			PathRoot: pathRoot,
 		},
 	}
@@ -49,15 +90,15 @@ func TestFallbackChain_AllowsHTTPMaskClientToReachInnerServer(t *testing.T) {
 		Mode:               "server",
 		LocalPort:          outerPort,
 		FallbackAddr:       fmt.Sprintf("127.0.0.1:%d", innerPort),
-		Key:                "outer-chain-key",
-		AEAD:               testAEAD,
-		ASCII:              "prefer_entropy",
-		CustomTable:        "vpxxvpvv",
+		Key:                outerKey,
+		AEAD:               outerAEAD,
+		ASCII:              outerASCII,
+		CustomTable:        outerTable,
 		EnablePureDownlink: true,
 		SuspiciousAction:   "fallback",
 		HTTPMask: config.HTTPMaskConfig{
 			Disable:  false,
-			Mode:     "ws",
+			Mode:     tc.httpMode,
 			PathRoot: pathRoot,
 		},
 	}
@@ -75,7 +116,7 @@ func TestFallbackChain_AllowsHTTPMaskClientToReachInnerServer(t *testing.T) {
 		ProxyMode:          "global",
 		HTTPMask: config.HTTPMaskConfig{
 			Disable:  false,
-			Mode:     "ws",
+			Mode:     tc.httpMode,
 			PathRoot: pathRoot,
 		},
 	}
@@ -90,7 +131,7 @@ func TestFallbackChain_AllowsHTTPMaskClientToReachInnerServer(t *testing.T) {
 	target := fmt.Sprintf("127.0.0.1:%d", echoPort)
 	sendHTTPConnect(t, conn, target)
 
-	msg := []byte("httpmask fallback chain payload")
+	msg := []byte("httpmask fallback chain payload:" + tc.name)
 	_ = conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 	if _, err := conn.Write(msg); err != nil {
 		t.Fatalf("write payload: %v", err)

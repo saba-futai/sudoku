@@ -509,7 +509,7 @@ func (s *TunnelServer) handleStream(rawConn net.Conn, req *httpRequestHeader, he
 			if err != nil {
 				return s.rejectOrReply(rawConn, headerBytes, buffered, http.StatusBadRequest, "bad request")
 			}
-			return s.sessionAuthorize(rawConn, earlyPayload)
+			return s.sessionAuthorize(rawConn, headerBytes, buffered, earlyPayload)
 		}
 		// Stream Split Session: GET /stream?token=... => downlink poll.
 		if token != "" && path == "/stream" {
@@ -666,7 +666,7 @@ func (s *TunnelServer) handlePoll(rawConn net.Conn, req *httpRequestHeader, head
 			if err != nil {
 				return s.rejectOrReply(rawConn, headerBytes, buffered, http.StatusBadRequest, "bad request")
 			}
-			return s.sessionAuthorize(rawConn, earlyPayload)
+			return s.sessionAuthorize(rawConn, headerBytes, buffered, earlyPayload)
 		}
 		if path == "/stream" {
 			if s.passThroughOnReject && !s.sessionHas(token) {
@@ -707,7 +707,7 @@ func (s *TunnelServer) handlePoll(rawConn net.Conn, req *httpRequestHeader, head
 	}
 }
 
-func (s *TunnelServer) sessionAuthorize(rawConn net.Conn, earlyPayload []byte) (HandleResult, net.Conn, error) {
+func (s *TunnelServer) sessionAuthorize(rawConn net.Conn, headerBytes, buffered, earlyPayload []byte) (HandleResult, net.Conn, error) {
 	token, err := newSessionToken()
 	if err != nil {
 		_ = writeSimpleHTTPResponse(rawConn, http.StatusInternalServerError, "internal error")
@@ -724,7 +724,7 @@ func (s *TunnelServer) sessionAuthorize(rawConn net.Conn, earlyPayload []byte) (
 		if err != nil {
 			_ = c1.Close()
 			_ = c2.Close()
-			return s.rejectOrReply(rawConn, nil, nil, http.StatusNotFound, "not found")
+			return s.rejectOrReply(rawConn, headerBytes, buffered, http.StatusNotFound, "not found")
 		}
 		responsePayload = prepared.ResponsePayload
 		userHash = prepared.UserHash

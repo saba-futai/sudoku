@@ -3,6 +3,12 @@
 ## Unreleased
 - TBD
 
+## v0.3.8（2026-03-28）
+- `httpmask/fallback`: 修复启用 HTTPMask 时的链式回落缺口。外层在 `stream/poll` 的 `/session` early-handshake 拒绝后，现在会把已读 HTTP 前缀完整回放给内层，恢复 `ws/auto/poll` 场景下的 fallback 中转能力。
+- `tests`: 将 HTTPMask 链式回落回归测试扩成模式矩阵，覆盖 `ws/auto/poll` 与 `auth reject/early reject` 组合，同时保留正常 HTTPMask 直连基线校验。
+- `dns`: 为内置 resolver 增加 DoT 实现与测试，但默认策略保持阿里公共 DNS 的 DoH 作为首选，更贴合当前基于 `http.Client`/HTTP2 连接复用的实现形态与跨网络兼容性。
+- `cleanup`: 收敛 DNS bootstrap 规范化/校验的重复逻辑，降低后续继续扩展 DoQ 等上游协议时的维护噪音。
+
 ## v0.3.7（2026-03-21）
 - `sudoku/downlink`: 新增服务端下行随机 inter-packet padding 注入，按写入规模和低频概率偶发插入纯 padding 小包，兼容旧端直接忽略，并同时覆盖 pure / packed 下行路径。
 - `sudoku/downlink`: 收敛服务端 pure / packed 下行装配逻辑，复用统一 writer 构造；补充 pure / packed 兼容回归测试，确认注入 padding 后解码结果不变。
