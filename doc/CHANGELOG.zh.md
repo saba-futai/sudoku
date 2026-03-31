@@ -28,7 +28,7 @@
 ## v0.3.3（2026-03-10）
 - `httpmask`: 将 KIP 握手折叠进首个 HTTP/WS 往返，消除启用 `httpmask` 时相对关闭状态多出的 1 RTT，同时保持抓包仍为 HTTP/WS、认证与 CDN 兼容路径不变。
 - `httpmask`: 新增统一的 early-handshake 构建逻辑，收敛 client/server 在 `apis`、CLI 与测试入口的重复实现，降低后续维护成本。
-- `tests`: 本地 smoke 新增固定链路时延下的 RTT 对照测试；`cmd/remote-matrix` 新增启用/关闭 `httpmask` 的 RTT 一致性校验。
+- `tests`: 本地 smoke 新增固定链路时延下的 RTT 对照测试，并补充启用/关闭 `httpmask` 的 RTT 一致性校验。
 - `crypto`: 记录层 epoch/seq 轮换逻辑改为随机初始化与更稳健的接收侧推进，补充对应测试，降低长连接与重协商边界场景下的脆弱性。
 - `sudoku/packed`: 为前缀字节增加受保护的 padding 扰动，并补充前缀回归测试，降低前缀模式过于固定的问题。
 

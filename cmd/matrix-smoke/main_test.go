@@ -19,21 +19,9 @@ func TestMatrixSmoke(t *testing.T) {
 	*flagVerbose = false
 	*flagTimeout = 10 * time.Second
 	*flagPayload = 64 // KiB
-	*flagQuick = testing.Short()
+	*flagQuick = testing.Short() || matrixSmokeForceQuick
 
-	all := combos(*flagQuick)
-	seen := make(map[string]struct{}, len(all))
-	dedup := make([]combo, 0, len(all))
-	for _, c := range all {
-		cc := c.canonical()
-		k := cc.String()
-		if _, ok := seen[k]; ok {
-			continue
-		}
-		seen[k] = struct{}{}
-		dedup = append(dedup, cc)
-	}
-	all = dedup
+	all := dedupeCombos(combos(*flagQuick))
 
 	for _, tc := range all {
 		tc := tc
@@ -62,10 +50,15 @@ func TestMatrixSmoke(t *testing.T) {
 
 func TestHTTPMaskRTTParity(t *testing.T) {
 	t.Helper()
+	if matrixSmokeForceQuick {
+		t.Skip("skip RTT parity under race to keep CI runtime bounded")
+	}
 
 	cases := []combo{
 		{enablePureDownlink: true, httpmaskEnabled: true, mux: "off", httpmaskMode: "auto", pathRoot: "aabbcc", asciiMode: "prefer_entropy", tableSet: "default"},
 		{enablePureDownlink: false, httpmaskEnabled: true, mux: "off", httpmaskMode: "ws", pathRoot: "", asciiMode: "prefer_ascii", tableSet: "custom7"},
+		{enablePureDownlink: true, httpmaskEnabled: true, mux: "off", httpmaskMode: "auto", pathRoot: "", asciiMode: "up_ascii_down_entropy", tableSet: "custom7"},
+		{enablePureDownlink: false, httpmaskEnabled: true, mux: "off", httpmaskMode: "ws", pathRoot: "aabbcc", asciiMode: "up_entropy_down_ascii", tableSet: "custom7"},
 	}
 
 	for _, tc := range cases {
@@ -144,7 +137,8 @@ func TestHTTPMaskRTTParity(t *testing.T) {
 			offClient.ServerAddress = offProxyAddr
 			offClient.TargetAddress = echoAddr
 
-			const warmupRuns = 2
+			warmupRuns := 2
+			sampleRuns := 5
 			for i := 0; i < warmupRuns; i++ {
 				if _, err := measureFirstEchoRTT(context.Background(), &onClient); err != nil {
 					t.Fatalf("warm up httpmask rtt: %v", err)
@@ -154,7 +148,6 @@ func TestHTTPMaskRTTParity(t *testing.T) {
 				}
 			}
 
-			const sampleRuns = 5
 			enabledSamples := make([]time.Duration, 0, sampleRuns)
 			baselineSamples := make([]time.Duration, 0, sampleRuns)
 			for i := 0; i < sampleRuns; i++ {

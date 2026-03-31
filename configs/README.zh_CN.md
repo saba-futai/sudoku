@@ -78,10 +78,18 @@
 - `aead`：`"chacha20-poly1305"` / `"aes-128-gcm"` / `"none"`（仅测试）。
 
 ### Sudoku 编码与填充
-- `ascii`：`"prefer_entropy"`（推荐）或 `"prefer_ascii"`。
+- `ascii`：
+  - `"prefer_entropy"`（推荐）：上下行都偏向 entropy
+  - `"prefer_ascii"`：上下行都偏向可打印 ASCII
+  - `"up_ascii_down_entropy"`：客户端上行偏向 ASCII，服务端下行偏向 entropy
+  - `"up_entropy_down_ascii"`：客户端上行偏向 entropy，服务端下行偏向 ASCII
 - `padding_min` / `padding_max`：0–100 的百分比；`padding_max` 必须 ≥ `padding_min`。
 - `custom_table`：可选的布局字符串，例如 `"xpxvvpvv"`（2 个 `x`、2 个 `p`、4 个 `v`）。
 - `custom_tables`：可选的布局列表；非空时会在每条连接中轮换布局。
+- 方向模式补充说明：
+  - `custom_table` 只会作用在 `ascii` 为 `entropy` 的那个方向上。
+  - 只有当客户端上行是 `entropy`（`prefer_entropy` / `up_entropy_down_ascii`）时，`custom_tables` 才能完整轮换，因为服务端需要从客户端探测流量里识别所选布局。
+  - 对于 `up_ascii_down_entropy`，下行仍会使用自定义布局，但 `custom_tables` 会自动收敛到第一项，因为仅作用于下行的多组布局无法通过上行探测区分。
 - `enable_pure_downlink`：
   - `true`：上下行都用经典 Sudoku 编码
   - `false`：启用带宽优化下行（需要 AEAD 且两端必须一致）
@@ -137,6 +145,8 @@
 ```
 
 - 服务端配置只需要设置 `reverse.listen` 来开启入口端口；要暴露哪些服务永远由客户端 `routes` 决定。
+- 反向代理会默认把客户端上行切到 `packed`，以降低 reverse-proxy 场景的客户端上行带宽压力；普通正向代理流量仍保持 `pure` 上行。
+- 服务端目前仍兼容旧版 `pure` 上行的 reverse 客户端，但这条兼容路径已经标记为废弃，后续会移除。
 - `listen`（服务端）：对外暴露的入口地址。
 - `client_id`（客户端）：可选的标识，用于多客户端的区分/管理。
 - `routes`（客户端）：要暴露的服务列表。

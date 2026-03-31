@@ -78,10 +78,18 @@ Client (basic TCP):
 - `aead`: `"chacha20-poly1305"` / `"aes-128-gcm"` / `"none"` (testing only).
 
 ### Sudoku encoding & padding
-- `ascii`: `"prefer_entropy"` (recommended) or `"prefer_ascii"`.
+- `ascii`:
+  - `"prefer_entropy"` (recommended): both directions prefer entropy
+  - `"prefer_ascii"`: both directions prefer printable ASCII
+  - `"up_ascii_down_entropy"`: client uplink prefers ASCII, server downlink prefers entropy
+  - `"up_entropy_down_ascii"`: client uplink prefers entropy, server downlink prefers ASCII
 - `padding_min` / `padding_max`: 0–100 percentage; `padding_max` must be ≥ `padding_min`.
 - `custom_table`: optional layout string like `"xpxvvpvv"` (2×`x`, 2×`p`, 4×`v`).
 - `custom_tables`: optional array of layouts; if non-empty it rotates layouts per connection.
+- Directional mode note:
+  - `custom_table` applies only on the direction whose `ascii` side is `entropy`.
+  - `custom_tables` can rotate fully only when the client uplink is `entropy` (`prefer_entropy` / `up_entropy_down_ascii`), because the server must identify the selected layout from the client probe.
+  - With `up_ascii_down_entropy`, the downlink still uses a custom layout, but `custom_tables` collapses to the first entry because multiple downlink-only layouts are not probe-distinguishable.
 - `enable_pure_downlink`:
   - `true`: both directions use classic Sudoku encoding
   - `false`: packed downlink mode to reduce overhead (requires AEAD, and both ends must match)
@@ -137,6 +145,8 @@ Client routes:
 ```
 
 - Server config only needs `reverse.listen` to open the entry port. Routes are always defined on the client.
+- Reverse sessions now default to `packed` uplink on the client side to reduce reverse-proxy upload overhead. Normal forward proxy traffic still keeps `pure` uplink.
+- Legacy reverse clients that still use `pure` uplink remain temporarily accepted by the server for compatibility, but this path is deprecated and will become incompatible later.
 - `listen` (server): the public reverse entry address.
 - `client_id` (client): optional identifier for multi-client routing/management.
 - `routes` (client): array of services to expose.

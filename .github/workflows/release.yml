@@ -116,12 +116,14 @@ jobs:
           
           cp configs/server.config.json server.config.json
           cp configs/client.config.json client.config.json
+          cp configs/README.md CONFIG-README.md
+          cp configs/README.zh_CN.md CONFIG-README.zh_CN.md
           
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            zip ${ASSET_NAME}.zip ${BINARY_NAME} server.config.json client.config.json configs/README.md configs/README.zh_CN.md
+            zip ${ASSET_NAME}.zip ${BINARY_NAME} server.config.json client.config.json CONFIG-README.md CONFIG-README.zh_CN.md
             echo "ARCHIVE_NAME=${ASSET_NAME}.zip" >> $GITHUB_ENV
           else
-            tar -czvf ${ASSET_NAME}.tar.gz ${BINARY_NAME} server.config.json client.config.json configs/README.md configs/README.zh_CN.md
+            tar -czvf ${ASSET_NAME}.tar.gz ${BINARY_NAME} server.config.json client.config.json CONFIG-README.md CONFIG-README.zh_CN.md
             echo "ARCHIVE_NAME=${ASSET_NAME}.tar.gz" >> $GITHUB_ENV
           fi
 

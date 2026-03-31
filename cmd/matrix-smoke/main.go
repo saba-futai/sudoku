@@ -55,7 +55,7 @@ type combo struct {
 	mux                string // off|auto|on (httpmask.multiplex)
 	httpmaskMode       string // auto|ws
 	pathRoot           string // "" or a segment
-	asciiMode          string // prefer_ascii|prefer_entropy
+	asciiMode          string // prefer_* or directional up_*_down_*
 	tableSet           string // default|custom7
 }
 
@@ -82,13 +82,12 @@ type tableCacheKey struct {
 
 var globalTableCache sync.Map // map[tableCacheKey][]*sudoku.Table
 
-func getTables(key, asciiMode, setName string) ([]*sudoku.Table, error) {
-	patterns := []string(nil)
+func tablePatternsForSet(setName string) ([]string, error) {
 	switch setName {
 	case "default":
-		// empty => default layout
+		return nil, nil
 	case "custom7":
-		patterns = []string{
+		return []string{
 			"xpxvvpvv",
 			"xpvvxvpv",
 			"vpxvvpvx",
@@ -96,9 +95,16 @@ func getTables(key, asciiMode, setName string) ([]*sudoku.Table, error) {
 			"vvpvpxvx",
 			"pvxvvpvx",
 			"vxpvpvvx",
-		}
+		}, nil
 	default:
 		return nil, fmt.Errorf("unknown table set: %q", setName)
+	}
+}
+
+func getTables(key, asciiMode, setName string) ([]*sudoku.Table, error) {
+	patterns, err := tablePatternsForSet(setName)
+	if err != nil {
+		return nil, err
 	}
 
 	k := tableCacheKey{mode: asciiMode, patterns: strings.Join(patterns, ",")}
@@ -204,6 +210,25 @@ func writeFull(conn net.Conn, b []byte) error {
 		}
 	}
 	return nil
+}
+
+func supportedASCIIModes() []string {
+	return []string{
+		"prefer_ascii",
+		"prefer_entropy",
+		"up_ascii_down_entropy",
+		"up_entropy_down_ascii",
+	}
+}
+
+func representativeCombos() []combo {
+	return []combo{
+		{true, true, "auto", "auto", "", "prefer_entropy", "default"},
+		{false, true, "on", "ws", "aabbcc", "prefer_ascii", "custom7"},
+		{true, false, "off", "ws", "", "prefer_entropy", "custom7"},
+		{true, true, "off", "auto", "", "up_ascii_down_entropy", "custom7"},
+		{false, true, "auto", "ws", "aabbcc", "up_entropy_down_ascii", "custom7"},
+	}
 }
 
 func proxyBidirectional(a, b net.Conn) {
@@ -701,15 +726,11 @@ func combos(quick bool) []combo {
 	muxVals := []string{"off", "auto", "on"}
 	httpmaskModes := []string{"auto", "ws"}
 	pathRoots := []string{"", "aabbcc"}
-	asciiModes := []string{"prefer_ascii", "prefer_entropy"}
+	asciiModes := supportedASCIIModes()
 	tableSets := []string{"default", "custom7"}
 
 	if quick {
-		return []combo{
-			{true, true, "auto", "auto", "", "prefer_entropy", "default"},
-			{false, true, "on", "ws", "aabbcc", "prefer_ascii", "custom7"},
-			{true, false, "off", "ws", "", "prefer_entropy", "custom7"},
-		}
+		return representativeCombos()
 	}
 
 	var out []combo
@@ -739,21 +760,25 @@ func combos(quick bool) []combo {
 	return out
 }
 
+func dedupeCombos(all []combo) []combo {
+	seen := make(map[string]struct{}, len(all))
+	dedup := make([]combo, 0, len(all))
+	for _, c := range all {
+		cc := c.canonical()
+		key := cc.String()
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		dedup = append(dedup, cc)
+	}
+	return dedup
+}
+
 func main() {
 	flag.Parse()
 
-	all := combos(*flagQuick)
-	seen := make(map[string]struct{}, len(all))
-	var dedup []combo
-	for _, c := range all {
-		k := c.canonical().String()
-		if _, ok := seen[k]; ok {
-			continue
-		}
-		seen[k] = struct{}{}
-		dedup = append(dedup, c.canonical())
-	}
-	all = dedup
+	all := dedupeCombos(combos(*flagQuick))
 
 	failures := 0
 	for i, tc := range all {
