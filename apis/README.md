@@ -215,7 +215,7 @@ case apis.SessionReverse:
 ```
 
 ## 反向代理（Reverse Proxy over Sudoku）
-服务端创建一个 `ReverseManager` 作为 `http.Handler`，并在隧道连接上调用 `HandleServerSession`；客户端使用 `DialBase` + `ServeReverseClientSession` 注册路由并长期保持会话：
+服务端创建一个 `ReverseManager` 作为 `http.Handler`，并在隧道连接上调用 `HandleServerSession`；客户端应优先使用 `DialReverseClientSession`，它会在 reverse 会话上自动强制 `packed` 上行，而普通代理流量仍保持 `pure` 上行：
 
 ```go
 mgr := apis.NewReverseManager()
@@ -225,11 +225,13 @@ _ = mgr // use as http.Handler
 _ = mgr.HandleServerSession(tunnelConn, userHash)
 
 // Client side:
-baseConn, _ := apis.DialBase(ctx, cfg)
-_ = apis.ServeReverseClientSession(baseConn, "client-id", []apis.ReverseRoute{
+_ = apis.DialReverseClientSession(ctx, cfg, "client-id", []apis.ReverseRoute{
 	{Path: "/gitea", Target: "127.0.0.1:3000"},
 })
 ```
+
+兼容说明：
+- 旧写法 `DialBase` + `ServeReverseClientSession` 目前仍可工作，但它走的是 legacy `pure` 上行 reverse，仅用于兼容旧实现，后续会变为不兼容。
 
 ## 说明
 - `DefaultConfig()` 提供合理默认值，仍需设置 `Key`、`Table` 及对应的地址字段。

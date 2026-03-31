@@ -48,10 +48,19 @@ type BaseDialer struct {
 // DialBase establishes a Sudoku tunnel connection to the configured server,
 // performing the handshake but not requesting any target address.
 func (d *BaseDialer) DialBase() (net.Conn, error) {
-	return d.dialBase()
+	return d.dialBaseWithUplinkMode(ObfsUplinkPure)
 }
 
-func (d *BaseDialer) dialHTTPMaskTunnel(dialCtx context.Context, table *sudoku.Table, upgrade func(net.Conn) (net.Conn, error)) (net.Conn, error) {
+// DialReverseBase establishes a reverse-session tunnel using packed uplink on the client side.
+func (d *BaseDialer) DialReverseBase() (net.Conn, error) {
+	return d.dialBaseWithUplinkMode(ObfsUplinkPacked)
+}
+
+func (d *BaseDialer) dialBase() (net.Conn, error) {
+	return d.dialBaseWithUplinkMode(ObfsUplinkPure)
+}
+
+func (d *BaseDialer) dialHTTPMaskTunnel(dialCtx context.Context, table *sudoku.Table, uplinkMode ObfsUplinkMode, upgrade func(net.Conn) (net.Conn, error)) (net.Conn, error) {
 	if d.Config == nil {
 		return nil, fmt.Errorf("missing config")
 	}
@@ -61,6 +70,7 @@ func (d *BaseDialer) dialHTTPMaskTunnel(dialCtx context.Context, table *sudoku.T
 		EnablePureDownlink: d.Config.EnablePureDownlink,
 		PaddingMin:         d.Config.PaddingMin,
 		PaddingMax:         d.Config.PaddingMax,
+		PackedUplink:       uplinkMode == ObfsUplinkPacked,
 	}, table, kipUserHashFromPrivateKey(d.PrivateKey, d.Config.Key), KIPFeatAll)
 	if err != nil {
 		return nil, err
@@ -96,7 +106,7 @@ func (d *BaseDialer) pickTable() (*sudoku.Table, error) {
 	return d.Tables[idx], nil
 }
 
-func (d *BaseDialer) dialBase() (net.Conn, error) {
+func (d *BaseDialer) dialBaseWithUplinkMode(uplinkMode ObfsUplinkMode) (net.Conn, error) {
 	if d.Config == nil {
 		return nil, fmt.Errorf("missing config")
 	}
@@ -111,8 +121,8 @@ func (d *BaseDialer) dialBase() (net.Conn, error) {
 		if err != nil {
 			return nil, err
 		}
-		conn, err := d.dialHTTPMaskTunnel(dialCtx, table, func(raw net.Conn) (net.Conn, error) {
-			return ClientHandshake(raw, d.Config, table, d.PrivateKey)
+		conn, err := d.dialHTTPMaskTunnel(dialCtx, table, uplinkMode, func(raw net.Conn) (net.Conn, error) {
+			return ClientHandshakeWithUplinkMode(raw, d.Config, table, d.PrivateKey, uplinkMode)
 		})
 		if err != nil {
 			return nil, fmt.Errorf("dial http tunnel failed: %w", err)
@@ -148,7 +158,7 @@ func (d *BaseDialer) dialBase() (net.Conn, error) {
 			rawRemote.Close()
 			return nil, err
 		}
-		baseConn, err = ClientHandshake(rawRemote, d.Config, table, d.PrivateKey)
+		baseConn, err = ClientHandshakeWithUplinkMode(rawRemote, d.Config, table, d.PrivateKey, uplinkMode)
 		if err != nil {
 			return nil, err
 		}

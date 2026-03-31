@@ -32,6 +32,18 @@ import (
 // It should return io.EOF/io.ErrUnexpectedEOF when more bytes are needed, and any other error on mismatch.
 type TableProbeFunc func(probe []byte, table *sudoku.Table) error
 
+type HandshakeObfsProbeFunc func(probe []byte, table *sudoku.Table, uplinkMode ObfsUplinkMode) error
+
+type HandshakeObfsSelection struct {
+	Table      *sudoku.Table
+	UplinkMode ObfsUplinkMode
+}
+
+type handshakeObfsCandidate struct {
+	table      *sudoku.Table
+	uplinkMode ObfsUplinkMode
+}
+
 func drainBuffered(r *bufio.Reader) ([]byte, error) {
 	n := r.Buffered()
 	if n <= 0 {
@@ -42,43 +54,89 @@ func drainBuffered(r *bufio.Reader) ([]byte, error) {
 	return out, err
 }
 
+func isProbeNeedMore(err error) bool {
+	return errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF)
+}
+
 // SelectTableByProbe detects which Sudoku table the client used by reading incremental bytes and
 // calling probe(probeBytes, table) for each remaining candidate.
 //
 // It returns the selected table and all bytes consumed from r (including any buffered bytes),
 // so the caller can replay them into the next layer without losing data.
 func SelectTableByProbe(r *bufio.Reader, tables []*sudoku.Table, probe TableProbeFunc) (*sudoku.Table, []byte, error) {
-	const (
-		maxProbeBytes = 64 * 1024
-		readChunk     = 4 * 1024
-	)
-	if r == nil {
-		return nil, nil, fmt.Errorf("nil reader")
-	}
 	if probe == nil {
 		return nil, nil, fmt.Errorf("nil probe func")
-	}
-	if len(tables) == 0 {
-		return nil, nil, fmt.Errorf("no table candidates")
 	}
 	if len(tables) > 255 {
 		return nil, nil, fmt.Errorf("too many table candidates: %d", len(tables))
 	}
 
-	// Copy so we can prune candidates without mutating the caller slice.
 	candidates := make([]*sudoku.Table, 0, len(tables))
-	for i := range tables {
-		if tables[i] != nil {
-			candidates = append(candidates, tables[i])
+	for _, table := range tables {
+		if table != nil {
+			candidates = append(candidates, table)
 		}
 	}
 	if len(candidates) == 0 {
 		return nil, nil, fmt.Errorf("no table candidates")
 	}
 
+	return selectProbeCandidates(r, candidates, func(probeBytes []byte, table *sudoku.Table) error {
+		return probe(probeBytes, table)
+	})
+}
+
+// SelectHandshakeObfsByProbe detects the Sudoku table and uplink mode used by the client handshake.
+// The caller provides a probe that must return nil on a match, io.EOF/io.ErrUnexpectedEOF when more
+// bytes are needed, and any other error on mismatch.
+func SelectHandshakeObfsByProbe(r *bufio.Reader, tables []*sudoku.Table, probe HandshakeObfsProbeFunc) (*HandshakeObfsSelection, []byte, error) {
+	if probe == nil {
+		return nil, nil, fmt.Errorf("nil probe func")
+	}
+
+	expanded := make([]handshakeObfsCandidate, 0, len(tables)*2)
+	for _, table := range tables {
+		if table == nil {
+			continue
+		}
+		expanded = append(expanded,
+			handshakeObfsCandidate{table: table, uplinkMode: ObfsUplinkPure},
+			handshakeObfsCandidate{table: table, uplinkMode: ObfsUplinkPacked},
+		)
+	}
+	if len(expanded) == 0 {
+		return nil, nil, fmt.Errorf("no table candidates")
+	}
+
+	selected, probeBytes, err := selectProbeCandidates(r, expanded, func(probeBytes []byte, candidate handshakeObfsCandidate) error {
+		return probe(probeBytes, candidate.table, candidate.uplinkMode)
+	})
+	if err != nil {
+		return nil, probeBytes, err
+	}
+	return &HandshakeObfsSelection{
+		Table:      selected.table,
+		UplinkMode: selected.uplinkMode,
+	}, probeBytes, nil
+}
+
+func selectProbeCandidates[T any](r *bufio.Reader, candidates []T, probe func([]byte, T) error) (T, []byte, error) {
+	var zero T
+
+	const (
+		maxProbeBytes = 64 * 1024
+		readChunk     = 4 * 1024
+	)
+	if r == nil {
+		return zero, nil, fmt.Errorf("nil reader")
+	}
+	if len(candidates) == 0 {
+		return zero, nil, fmt.Errorf("no table candidates")
+	}
+
 	probeBytes, err := drainBuffered(r)
 	if err != nil {
-		return nil, nil, fmt.Errorf("drain buffered bytes failed: %w", err)
+		return zero, nil, fmt.Errorf("drain buffered bytes failed: %w", err)
 	}
 
 	tmp := make([]byte, readChunk)
@@ -86,7 +144,7 @@ func SelectTableByProbe(r *bufio.Reader, tables []*sudoku.Table, probe TableProb
 		if len(candidates) == 1 {
 			tail, err := drainBuffered(r)
 			if err != nil {
-				return nil, nil, fmt.Errorf("drain buffered bytes failed: %w", err)
+				return zero, nil, fmt.Errorf("drain buffered bytes failed: %w", err)
 			}
 			probeBytes = append(probeBytes, tail...)
 			return candidates[0], probeBytes, nil
@@ -94,30 +152,28 @@ func SelectTableByProbe(r *bufio.Reader, tables []*sudoku.Table, probe TableProb
 
 		needMore := false
 		nextCandidates := candidates[:0]
-		for _, table := range candidates {
-			err := probe(probeBytes, table)
+		for _, candidate := range candidates {
+			err := probe(probeBytes, candidate)
 			if err == nil {
 				tail, err := drainBuffered(r)
 				if err != nil {
-					return nil, nil, fmt.Errorf("drain buffered bytes failed: %w", err)
+					return zero, nil, fmt.Errorf("drain buffered bytes failed: %w", err)
 				}
 				probeBytes = append(probeBytes, tail...)
-				return table, probeBytes, nil
+				return candidate, probeBytes, nil
 			}
-			if errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) {
+			if isProbeNeedMore(err) {
 				needMore = true
-				nextCandidates = append(nextCandidates, table)
-				continue
+				nextCandidates = append(nextCandidates, candidate)
 			}
-			// Definitive mismatch: drop table.
 		}
 		candidates = nextCandidates
 
 		if len(candidates) == 0 || !needMore {
-			return nil, probeBytes, fmt.Errorf("handshake table selection failed")
+			return zero, probeBytes, fmt.Errorf("handshake table selection failed")
 		}
 		if len(probeBytes) >= maxProbeBytes {
-			return nil, probeBytes, fmt.Errorf("handshake probe exceeded %d bytes", maxProbeBytes)
+			return zero, probeBytes, fmt.Errorf("handshake probe exceeded %d bytes", maxProbeBytes)
 		}
 
 		n, err := r.Read(tmp)
@@ -125,7 +181,7 @@ func SelectTableByProbe(r *bufio.Reader, tables []*sudoku.Table, probe TableProb
 			probeBytes = append(probeBytes, tmp[:n]...)
 		}
 		if err != nil {
-			return nil, probeBytes, fmt.Errorf("handshake probe read failed: %w", err)
+			return zero, probeBytes, fmt.Errorf("handshake probe read failed: %w", err)
 		}
 	}
 }

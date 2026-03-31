@@ -21,6 +21,7 @@ package sudoku
 
 import (
 	"bufio"
+	"bytes"
 	"io"
 	"math/rand"
 	"net"
@@ -46,6 +47,10 @@ type PackedConn struct {
 	net.Conn
 	table  *Table
 	reader *bufio.Reader
+
+	recorder   *bytes.Buffer
+	recording  bool
+	recordLock sync.Mutex
 
 	// Read buffer
 	rawBuf      []byte
@@ -83,6 +88,10 @@ func (pc *PackedConn) CloseRead() error {
 }
 
 func NewPackedConn(c net.Conn, table *Table, pMin, pMax int) *PackedConn {
+	return NewPackedConnWithRecord(c, table, pMin, pMax, false)
+}
+
+func NewPackedConnWithRecord(c net.Conn, table *Table, pMin, pMax int, record bool) *PackedConn {
 	localRng := newSeededRand()
 
 	pc := &PackedConn{
@@ -105,7 +114,42 @@ func NewPackedConn(c net.Conn, table *Table, pMin, pMax int) *PackedConn {
 	if len(pc.padPool) == 0 {
 		pc.padPool = append(pc.padPool, pc.padMarker)
 	}
+	if record {
+		pc.recorder = new(bytes.Buffer)
+		pc.recording = true
+	}
 	return pc
+}
+
+func (pc *PackedConn) StopRecording() {
+	pc.recordLock.Lock()
+	pc.recording = false
+	pc.recorder = nil
+	pc.recordLock.Unlock()
+}
+
+func (pc *PackedConn) GetBufferedAndRecorded() []byte {
+	if pc == nil {
+		return nil
+	}
+
+	pc.recordLock.Lock()
+	defer pc.recordLock.Unlock()
+
+	var recorded []byte
+	if pc.recorder != nil {
+		recorded = pc.recorder.Bytes()
+	}
+
+	buffered := pc.reader.Buffered()
+	if buffered > 0 {
+		peeked, _ := pc.reader.Peek(buffered)
+		full := make([]byte, len(recorded)+len(peeked))
+		copy(full, recorded)
+		copy(full[len(recorded):], peeked)
+		return full
+	}
+	return recorded
 }
 
 // maybeAddPadding inserts a padding byte with the same probability model as Conn.
@@ -324,6 +368,12 @@ func (pc *PackedConn) Read(p []byte) (int, error) {
 	for {
 		nr, rErr := pc.reader.Read(pc.rawBuf)
 		if nr > 0 {
+			pc.recordLock.Lock()
+			if pc.recording {
+				pc.recorder.Write(pc.rawBuf[:nr])
+			}
+			pc.recordLock.Unlock()
+
 			// Cache frequently accessed variables
 			rBuf := pc.readBitBuf
 			rBits := pc.readBits

@@ -184,7 +184,7 @@ func (s *TunnelServer) handleWS(rawConn net.Conn, req *httpRequestHeader, header
 			return HandleDone, nil, nil
 		}
 		if wrapped != nil {
-			outConn = wrapEarlyHandshakeConn(wrapped, prepared.UserHash)
+			outConn = wrapEarlyHandshakeConn(wrapped, prepared.UserHash, wrappedConnUplinkPacked(wrapped))
 		}
 	}
 	return HandleStartTunnel, outConn, nil

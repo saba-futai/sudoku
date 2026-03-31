@@ -20,27 +20,59 @@ with this application without prior consent.
 package apis
 
 import (
+	"io"
 	"net"
 
+	"github.com/SUDOKU-ASCII/sudoku/internal/tunnel"
 	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
 )
 
-const (
-	downlinkModePure   byte = 0x01
-	downlinkModePacked byte = 0x02
-)
-
 func buildClientObfsConn(raw net.Conn, cfg *ProtocolConfig, table *sudoku.Table) net.Conn {
-	base := sudoku.NewConn(raw, table, cfg.PaddingMin, cfg.PaddingMax, false)
-	if cfg.EnablePureDownlink {
-		return base
-	}
-	packed := sudoku.NewPackedConn(raw, table, cfg.PaddingMin, cfg.PaddingMax)
-	return sudoku.NewDirectionalConn(raw, packed, base)
+	return buildClientObfsConnForUplinkMode(raw, cfg, table, tunnel.ObfsUplinkPure)
 }
 
-func buildServerObfsConn(raw net.Conn, cfg *ProtocolConfig, table *sudoku.Table, record bool) (*sudoku.Conn, net.Conn) {
-	uplink := sudoku.NewConn(raw, table, cfg.PaddingMin, cfg.PaddingMax, record)
+func buildReverseClientObfsConn(raw net.Conn, cfg *ProtocolConfig, table *sudoku.Table) net.Conn {
+	return buildClientObfsConnForUplinkMode(raw, cfg, table, tunnel.ObfsUplinkPacked)
+}
+
+func buildClientObfsConnForUplinkMode(raw net.Conn, cfg *ProtocolConfig, table *sudoku.Table, uplinkMode tunnel.ObfsUplinkMode) net.Conn {
+	downlinkTable := table.OppositeDirection()
+
+	var reader io.Reader
+	if cfg.EnablePureDownlink {
+		reader = sudoku.NewConn(raw, downlinkTable, cfg.PaddingMin, cfg.PaddingMax, false)
+	} else {
+		reader = sudoku.NewPackedConn(raw, downlinkTable, cfg.PaddingMin, cfg.PaddingMax)
+	}
+
+	var writer io.Writer
+	var closers []func() error
+	switch uplinkMode {
+	case tunnel.ObfsUplinkPacked:
+		packed := sudoku.NewPackedConn(raw, table, cfg.PaddingMin, cfg.PaddingMax)
+		writer = packed
+		closers = append(closers, packed.Flush)
+	default:
+		writer = sudoku.NewConn(raw, table, cfg.PaddingMin, cfg.PaddingMax, false)
+	}
+
+	return sudoku.NewDirectionalConn(raw, reader, writer, closers...)
+}
+
+type recordingObfsConn interface {
+	net.Conn
+	StopRecording()
+	GetBufferedAndRecorded() []byte
+}
+
+func buildServerObfsConn(raw net.Conn, cfg *ProtocolConfig, table *sudoku.Table, uplinkMode tunnel.ObfsUplinkMode, record bool) (recordingObfsConn, net.Conn) {
+	var uplink recordingObfsConn
+	switch uplinkMode {
+	case tunnel.ObfsUplinkPacked:
+		uplink = sudoku.NewPackedConnWithRecord(raw, table, cfg.PaddingMin, cfg.PaddingMax, record)
+	default:
+		uplink = sudoku.NewConn(raw, table, cfg.PaddingMin, cfg.PaddingMax, record)
+	}
 	downlink, closers := sudoku.NewServerDownlinkWriter(raw, table, cfg.PaddingMin, cfg.PaddingMax, cfg.EnablePureDownlink)
 	return uplink, sudoku.NewDirectionalConn(raw, uplink, downlink, closers...)
 }

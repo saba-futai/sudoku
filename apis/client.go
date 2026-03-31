@@ -73,13 +73,14 @@ func pickClientTable(cfg *ProtocolConfig) (*sudoku.Table, error) {
 	return candidates[idx], nil
 }
 
-func wrapClientConn(rawConn net.Conn, cfg *ProtocolConfig, table *sudoku.Table, seed string) (net.Conn, error) {
-	pskC2S, pskS2C := tunnel.DerivePSKDirectionalBases(seed)
-	return wrapClientConnWithBases(rawConn, cfg, table, pskC2S, pskS2C)
-}
-
-func wrapClientConnWithBases(rawConn net.Conn, cfg *ProtocolConfig, table *sudoku.Table, sendBase, recvBase []byte) (net.Conn, error) {
-	obfsConn := buildClientObfsConn(rawConn, cfg, table)
+func wrapClientConnWithBasesAndUplinkMode(rawConn net.Conn, cfg *ProtocolConfig, table *sudoku.Table, sendBase, recvBase []byte, uplinkMode tunnel.ObfsUplinkMode) (net.Conn, error) {
+	var obfsConn net.Conn
+	switch uplinkMode {
+	case tunnel.ObfsUplinkPacked:
+		obfsConn = buildReverseClientObfsConn(rawConn, cfg, table)
+	default:
+		obfsConn = buildClientObfsConn(rawConn, cfg, table)
+	}
 	cConn, err := crypto.NewRecordConn(obfsConn, cfg.AEADMethod, sendBase, recvBase)
 	if err != nil {
 		_ = rawConn.Close()
@@ -89,7 +90,12 @@ func wrapClientConnWithBases(rawConn net.Conn, cfg *ProtocolConfig, table *sudok
 }
 
 func upgradeClientConn(rawConn net.Conn, cfg *ProtocolConfig, table *sudoku.Table, seed string, postHandshake func(net.Conn) error) (net.Conn, error) {
-	cConn, err := wrapClientConn(rawConn, cfg, table, seed)
+	return upgradeClientConnWithUplinkMode(rawConn, cfg, table, seed, tunnel.ObfsUplinkPure, postHandshake)
+}
+
+func upgradeClientConnWithUplinkMode(rawConn net.Conn, cfg *ProtocolConfig, table *sudoku.Table, seed string, uplinkMode tunnel.ObfsUplinkMode, postHandshake func(net.Conn) error) (net.Conn, error) {
+	pskC2S, pskS2C := tunnel.DerivePSKDirectionalBases(seed)
+	cConn, err := wrapClientConnWithBasesAndUplinkMode(rawConn, cfg, table, pskC2S, pskS2C, uplinkMode)
 	if err != nil {
 		return nil, err
 	}
@@ -137,10 +143,18 @@ func Dial(ctx context.Context, cfg *ProtocolConfig) (net.Conn, error) {
 //
 // This is useful for higher-level protocols built on top of the tunnel (e.g. mux sessions, reverse proxy sessions).
 func DialBase(ctx context.Context, cfg *ProtocolConfig) (net.Conn, error) {
-	return establishBaseConn(ctx, cfg, validateBaseClientConfig, nil)
+	return establishBaseConnWithUplinkMode(ctx, cfg, validateBaseClientConfig, tunnel.ObfsUplinkPure, nil)
+}
+
+func dialReverseBase(ctx context.Context, cfg *ProtocolConfig) (net.Conn, error) {
+	return establishBaseConnWithUplinkMode(ctx, cfg, validateBaseClientConfig, tunnel.ObfsUplinkPacked, nil)
 }
 
 func establishBaseConn(ctx context.Context, cfg *ProtocolConfig, validate func(*ProtocolConfig) error, postHandshake func(net.Conn) error) (net.Conn, error) {
+	return establishBaseConnWithUplinkMode(ctx, cfg, validate, tunnel.ObfsUplinkPure, postHandshake)
+}
+
+func establishBaseConnWithUplinkMode(ctx context.Context, cfg *ProtocolConfig, validate func(*ProtocolConfig) error, uplinkMode tunnel.ObfsUplinkMode, postHandshake func(net.Conn) error) (net.Conn, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("config is required")
 	}
@@ -164,6 +178,7 @@ func establishBaseConn(ctx context.Context, cfg *ProtocolConfig, validate func(*
 				EnablePureDownlink: cfg.EnablePureDownlink,
 				PaddingMin:         cfg.PaddingMin,
 				PaddingMax:         cfg.PaddingMax,
+				PackedUplink:       uplinkMode == tunnel.ObfsUplinkPacked,
 			}, table, kipUserHashFromKey(cfg.Key), tunnel.KIPFeatAll)
 			if err != nil {
 				return nil, err
@@ -177,7 +192,7 @@ func establishBaseConn(ctx context.Context, cfg *ProtocolConfig, validate func(*
 				AuthKey:        seed,
 				EarlyHandshake: earlyHandshake,
 				Upgrade: func(rawConn net.Conn) (net.Conn, error) {
-					return upgradeClientConn(rawConn, cfg, table, seed, nil)
+					return upgradeClientConnWithUplinkMode(rawConn, cfg, table, seed, uplinkMode, nil)
 				},
 				Multiplex: cfg.HTTPMaskMultiplex,
 			})
@@ -226,7 +241,7 @@ func establishBaseConn(ctx context.Context, cfg *ProtocolConfig, validate func(*
 		return nil, err
 	}
 
-	cConn, err := upgradeClientConn(rawConn, cfg, table, seed, nil)
+	cConn, err := upgradeClientConnWithUplinkMode(rawConn, cfg, table, seed, uplinkMode, nil)
 	if err != nil {
 		return nil, err
 	}

@@ -97,6 +97,10 @@ func KIPHandshakeClient(rc *crypto.RecordConn, seed string, userHash [kipHelloUs
 }
 
 func ClientHandshake(conn net.Conn, cfg *config.Config, table *sudoku.Table, privateKey []byte) (net.Conn, error) {
+	return ClientHandshakeWithUplinkMode(conn, cfg, table, privateKey, ObfsUplinkPure)
+}
+
+func ClientHandshakeWithUplinkMode(conn net.Conn, cfg *config.Config, table *sudoku.Table, privateKey []byte, uplinkMode ObfsUplinkMode) (net.Conn, error) {
 	if cfg == nil {
 		return nil, fmt.Errorf("nil config")
 	}
@@ -107,7 +111,13 @@ func ClientHandshake(conn net.Conn, cfg *config.Config, table *sudoku.Table, pri
 		return nil, fmt.Errorf("enable_pure_downlink=false requires AEAD")
 	}
 
-	obfsConn := buildObfsConnForClient(conn, table, cfg)
+	var obfsConn net.Conn
+	switch uplinkMode {
+	case ObfsUplinkPacked:
+		obfsConn = buildReverseObfsConnForClient(conn, table, cfg)
+	default:
+		obfsConn = buildObfsConnForClient(conn, table, cfg)
+	}
 
 	pskC2S, pskS2C := derivePSKDirectionalBases(cfg.Key)
 	rc, err := crypto.NewRecordConn(obfsConn, cfg.AEAD, pskC2S, pskS2C)

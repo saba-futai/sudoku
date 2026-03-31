@@ -48,7 +48,7 @@ func startReverseClient(cfg *config.Config, baseDialer *tunnel.BaseDialer) {
 		maxBackoff := 10 * time.Second
 
 		for {
-			conn, err := baseDialer.DialBase()
+			conn, err := baseDialer.DialReverseBase()
 			if err != nil {
 				logx.Warnf("Reverse", "dial base failed: %v", err)
 				time.Sleep(backoff)

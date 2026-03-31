@@ -30,6 +30,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/SUDOKU-ASCII/sudoku/internal/config"
+	itunnel "github.com/SUDOKU-ASCII/sudoku/internal/tunnel"
 	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
 )
 
@@ -141,6 +143,144 @@ func TestReverseProxySession(t *testing.T) {
 	}
 
 	_ = baseConn.Close()
+
+	select {
+	case err := <-clientErr:
+		if err != nil {
+			t.Fatalf("client session: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("client session timeout")
+	}
+
+	select {
+	case err := <-serverErr:
+		if err != nil {
+			t.Fatalf("server session: %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatalf("server session timeout")
+	}
+}
+
+func TestDialReverseClientSession_UsesPackedUplink(t *testing.T) {
+	table := sudoku.NewTable("seed-packed-reverse", "prefer_entropy")
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("ok"))
+	}))
+	defer backend.Close()
+	backendAddr := strings.TrimPrefix(backend.URL, "http://")
+
+	revMgr := NewReverseManager()
+	revLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen reverse http: %v", err)
+	}
+	defer revLn.Close()
+
+	revSrv := &http.Server{
+		Handler:           revMgr,
+		ReadHeaderTimeout: 3 * time.Second,
+	}
+	go func() {
+		_ = revSrv.Serve(revLn)
+	}()
+	defer func() { _ = revSrv.Close() }()
+
+	serverLn, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen server: %v", err)
+	}
+	defer serverLn.Close()
+
+	serverCfg := &config.Config{
+		Key:                "k",
+		AEAD:               "chacha20-poly1305",
+		PaddingMin:         0,
+		PaddingMax:         0,
+		EnablePureDownlink: true,
+		HTTPMask:           config.HTTPMaskConfig{Disable: true},
+	}
+
+	serverErr := make(chan error, 1)
+	connCh := make(chan net.Conn, 1)
+	go func() {
+		raw, err := serverLn.Accept()
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		conn, meta, err := itunnel.HandshakeAndUpgradeWithTablesMeta(raw, serverCfg, []*sudoku.Table{table})
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		if meta == nil || !meta.UplinkPacked {
+			_ = conn.Close()
+			serverErr <- fmt.Errorf("reverse session did not use packed uplink")
+			return
+		}
+		connCh <- conn
+
+		msg, err := itunnel.ReadKIPMessage(conn)
+		if err != nil {
+			serverErr <- err
+			return
+		}
+		if msg.Type != itunnel.KIPTypeStartRev {
+			_ = conn.Close()
+			serverErr <- fmt.Errorf("unexpected session kind: %d", msg.Type)
+			return
+		}
+		serverErr <- revMgr.HandleServerSession(conn, meta.UserHash, msg.Payload)
+	}()
+
+	clientCfg := &ProtocolConfig{
+		ServerAddress:      serverLn.Addr().String(),
+		Key:                "k",
+		AEADMethod:         "chacha20-poly1305",
+		Table:              table,
+		PaddingMin:         0,
+		PaddingMax:         0,
+		EnablePureDownlink: true,
+		DisableHTTPMask:    true,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	clientErr := make(chan error, 1)
+	go func() {
+		clientErr <- DialReverseClientSession(ctx, clientCfg, "client", []ReverseRoute{
+			{Path: "/gitea", Target: backendAddr},
+		})
+	}()
+
+	client := &http.Client{Timeout: 3 * time.Second}
+	url := "http://" + revLn.Addr().String() + "/gitea/hello"
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		resp, err := client.Get(url)
+		if err == nil && resp != nil {
+			body, _ := io.ReadAll(resp.Body)
+			_ = resp.Body.Close()
+			if string(body) == "ok" {
+				break
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("reverse proxy not ready: %v", err)
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+
+	select {
+	case conn := <-connCh:
+		_ = conn.Close()
+	case <-time.After(5 * time.Second):
+		t.Fatalf("server conn not captured")
+	}
 
 	select {
 	case err := <-clientErr:

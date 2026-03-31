@@ -738,7 +738,7 @@ func (s *TunnelServer) sessionAuthorize(rawConn net.Conn, headerBytes, buffered,
 				return HandleDone, nil, nil
 			}
 			if wrapped != nil {
-				outConn = wrapEarlyHandshakeConn(wrapped, userHash)
+				outConn = wrapEarlyHandshakeConn(wrapped, userHash, wrappedConnUplinkPacked(wrapped))
 			}
 		}
 	}

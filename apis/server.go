@@ -37,9 +37,9 @@ import (
 	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
 )
 
-func probeHandshakeBytes(probe []byte, cfg *ProtocolConfig, table *sudoku.Table) error {
+func probeHandshakeBytes(probe []byte, cfg *ProtocolConfig, table *sudoku.Table, uplinkMode tunnel.ObfsUplinkMode) error {
 	rc := &connutil.ReadOnlyConn{Reader: bytes.NewReader(probe)}
-	_, obfsConn := buildServerObfsConn(rc, cfg, table, false)
+	_, obfsConn := buildServerObfsConn(rc, cfg, table, uplinkMode, false)
 	pskC2S, pskS2C := tunnel.DerivePSKDirectionalBases(cfg.Key)
 	// Server side: recv is client->server, send is server->client.
 	cConn, err := crypto.NewRecordConn(obfsConn, cfg.AEADMethod, pskS2C, pskC2S)
@@ -257,8 +257,8 @@ func serverHandshakeCoreWithUserHash(rawConn net.Conn, cfg *ProtocolConfig) (net
 	}
 
 	tables := cfg.tableCandidates()
-	selectedTable, preRead, err := tunnel.SelectTableByProbe(bufReader, tables, func(probe []byte, table *sudoku.Table) error {
-		return probeHandshakeBytes(probe, cfg, table)
+	selected, preRead, err := tunnel.SelectHandshakeObfsByProbe(bufReader, tables, func(probe []byte, table *sudoku.Table, uplinkMode tunnel.ObfsUplinkMode) error {
+		return probeHandshakeBytes(probe, cfg, table, uplinkMode)
 	})
 	if err != nil {
 		rawConn.SetReadDeadline(time.Time{})
@@ -271,7 +271,7 @@ func serverHandshakeCoreWithUserHash(rawConn net.Conn, cfg *ProtocolConfig) (net
 	}
 
 	baseConn := tunnel.NewPreBufferedConn(rawConn, preRead)
-	sConn, obfsConn := buildServerObfsConn(baseConn, cfg, selectedTable, true)
+	sConn, obfsConn := buildServerObfsConn(baseConn, cfg, selected.Table, selected.UplinkMode, true)
 
 	fail := func(originalErr error) error {
 		rawConn.SetReadDeadline(time.Time{})
