@@ -38,9 +38,6 @@ import (
 
 func TestHTTPProxy_Multiplex_LargeDownloads(t *testing.T) {
 	downloadBytes := int64(8 << 20) // 8 MiB per download (tunable via env var)
-	if integrationRaceBuild {
-		downloadBytes = 2 << 20
-	}
 	if v := strings.TrimSpace(os.Getenv("SUDOKU_MUX_DOWNLOAD_BYTES")); v != "" {
 		n, err := strconv.ParseInt(v, 10, 64)
 		if err != nil || n <= 0 {
@@ -50,9 +47,6 @@ func TestHTTPProxy_Multiplex_LargeDownloads(t *testing.T) {
 	}
 
 	downloads := 6
-	if integrationRaceBuild {
-		downloads = 3
-	}
 	if v := strings.TrimSpace(os.Getenv("SUDOKU_MUX_DOWNLOAD_CONCURRENCY")); v != "" {
 		n, err := strconv.Atoi(v)
 		if err != nil || n <= 0 {

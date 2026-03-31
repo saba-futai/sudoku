@@ -19,7 +19,7 @@ func TestMatrixSmoke(t *testing.T) {
 	*flagVerbose = false
 	*flagTimeout = 10 * time.Second
 	*flagPayload = 64 // KiB
-	*flagQuick = testing.Short() || matrixSmokeForceQuick
+	*flagQuick = testing.Short()
 
 	all := dedupeCombos(combos(*flagQuick))
 
@@ -50,9 +50,6 @@ func TestMatrixSmoke(t *testing.T) {
 
 func TestHTTPMaskRTTParity(t *testing.T) {
 	t.Helper()
-	if matrixSmokeForceQuick {
-		t.Skip("skip RTT parity under race to keep CI runtime bounded")
-	}
 
 	cases := []combo{
 		{enablePureDownlink: true, httpmaskEnabled: true, mux: "off", httpmaskMode: "auto", pathRoot: "aabbcc", asciiMode: "prefer_entropy", tableSet: "default"},
