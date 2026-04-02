@@ -30,7 +30,7 @@ type Config struct {
 	SuspiciousAction   string         `json:"suspicious_action"` // "fallback" or "silent"
 	PaddingMin         int            `json:"padding_min"`
 	PaddingMax         int            `json:"padding_max"`
-	RuleURLs           []string       `json:"rule_urls"`            // Empty = use defaults; supports "global", "direct" keywords
+	RuleURLs           []string       `json:"rule_urls"`            // Routing rule sources; supports "global"/"direct" keywords and !url reject sources
 	ProxyMode          string         `json:"proxy_mode"`           // Runtime state, populated by Load logic
 	ASCII              string         `json:"ascii"`                // "prefer_entropy", "prefer_ascii", or directional "up_ascii_down_entropy"/"up_entropy_down_ascii"
 	CustomTable        string         `json:"custom_table"`         // Optional: defines X/P/V layout, e.g. "xpxvvpvv"

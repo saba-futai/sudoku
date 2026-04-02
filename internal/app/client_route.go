@@ -31,13 +31,6 @@ import (
 	"github.com/SUDOKU-ASCII/sudoku/pkg/logx"
 )
 
-var lookupIPsWithCache = func(ctx context.Context, resolver *dnsutil.Resolver, host string) ([]net.IP, error) {
-	if resolver != nil {
-		return resolver.LookupIPs(ctx, host)
-	}
-	return dnsutil.LookupIPsWithCache(ctx, host)
-}
-
 var resolveWithCache = func(ctx context.Context, resolver *dnsutil.Resolver, addr string) (string, error) {
 	if resolver != nil {
 		return resolver.Resolve(ctx, addr)
@@ -46,62 +39,83 @@ var resolveWithCache = func(ctx context.Context, resolver *dnsutil.Resolver, add
 }
 
 type routeDecision struct {
-	shouldProxy bool
-	match       string
-	directAddr  string
+	action     string
+	match      string
+	directAddr string
 }
 
-func decideRoute(ctx context.Context, cfg *config.Config, geoMgr *geodata.Manager, destAddr string, destIP net.IP, resolver *dnsutil.Resolver) routeDecision {
-	decision := routeDecision{shouldProxy: true, match: "MODE(global)", directAddr: destAddr}
+const (
+	routeActionProxy  = "PROXY"
+	routeActionDirect = "DIRECT"
+	routeActionReject = "REJECT"
+)
+
+type routeManagers struct {
+	direct *geodata.Manager
+	reject *geodata.Manager
+}
+
+func buildRouteManagers(cfg *config.Config) *routeManagers {
+	if cfg == nil {
+		return nil
+	}
+	directURLs, rejectURLs := config.RuntimeRuleURLs(cfg.ProxyMode, cfg.RuleURLs)
+	mgrs := &routeManagers{}
+	if len(directURLs) > 0 {
+		mgrs.direct = geodata.GetInstance(directURLs)
+	}
+	if len(rejectURLs) > 0 {
+		mgrs.reject = geodata.GetInstance(rejectURLs)
+	}
+	if mgrs.direct == nil && mgrs.reject == nil {
+		return nil
+	}
+	return mgrs
+}
+
+func (d routeDecision) shouldProxy() bool {
+	return d.action == routeActionProxy
+}
+
+func (m *routeManagers) managerForAction(action string) *geodata.Manager {
+	if m == nil {
+		return nil
+	}
+	switch action {
+	case routeActionDirect:
+		return m.direct
+	case routeActionReject:
+		return m.reject
+	default:
+		return nil
+	}
+}
+
+func decideRoute(cfg *config.Config, mgrs *routeManagers, destAddr string, destIP net.IP) routeDecision {
+	decision := routeDecision{action: routeActionProxy, match: "MODE(global)", directAddr: destAddr}
 	if cfg == nil {
 		decision.match = "CFG(nil)"
 		return decision
 	}
 
+	if matched, match, _ := matchRuleManager(mgrs, routeActionReject, destAddr, destIP); matched {
+		return routeDecision{action: routeActionReject, match: match, directAddr: destAddr}
+	}
+
 	switch cfg.ProxyMode {
 	case "direct":
-		return routeDecision{shouldProxy: false, match: "MODE(direct)", directAddr: destAddr}
+		return routeDecision{action: routeActionDirect, match: "MODE(direct)", directAddr: destAddr}
 	case "global":
-		return routeDecision{shouldProxy: true, match: "MODE(global)", directAddr: destAddr}
+		return routeDecision{action: routeActionProxy, match: "MODE(global)", directAddr: destAddr}
 	case "pac":
-		if geoMgr == nil {
+		if mgrs == nil || mgrs.direct == nil {
 			decision.match = "PAC(no-rules)"
 			return decision
 		}
 
-		if ok, m := geoMgr.MatchCN(destAddr, destIP); ok {
-			return routeDecision{shouldProxy: false, match: m.String(), directAddr: destAddr}
+		if matched, match, directAddr := matchRuleManager(mgrs, routeActionDirect, destAddr, destIP); matched {
+			return routeDecision{action: routeActionDirect, match: match, directAddr: directAddr}
 		}
-		if destIP != nil {
-			decision.match = "PAC/NONE"
-			return decision
-		}
-
-		host, port, err := net.SplitHostPort(destAddr)
-		if err != nil {
-			decision.match = "PAC/ADDR_INVALID"
-			return decision
-		}
-
-		if ctx == nil {
-			ctx = context.Background()
-		}
-		ips, err := lookupIPsWithCache(ctx, resolver, host)
-		if err != nil || len(ips) == 0 {
-			decision.match = "PAC/DNS_FAIL"
-			return decision
-		}
-
-		for _, ip := range ips {
-			if ok, m := geoMgr.MatchCN(destAddr, ip); ok {
-				return routeDecision{
-					shouldProxy: false,
-					match:       "DNS->" + m.String(),
-					directAddr:  net.JoinHostPort(ip.String(), port),
-				}
-			}
-		}
-
 		decision.match = "PAC/NONE"
 		return decision
 	default:
@@ -110,20 +124,34 @@ func decideRoute(ctx context.Context, cfg *config.Config, geoMgr *geodata.Manage
 	}
 }
 
-func logRoute(network string, src net.Addr, destAddr string, match string, shouldProxy bool) {
+func matchRuleManager(mgrs *routeManagers, action string, destAddr string, destIP net.IP) (bool, string, string) {
+	mgr := mgrs.managerForAction(action)
+	if mgr == nil {
+		return false, "", ""
+	}
+
+	if ok, m := mgr.MatchCN(destAddr, destIP); ok {
+		if action == routeActionReject && m.Kind == "LOCAL" {
+			return false, "", ""
+		}
+		return true, action + "/" + m.String(), destAddr
+	}
+	return false, "", ""
+}
+
+func logRoute(network string, src net.Addr, destAddr string, decision routeDecision) {
 	srcStr := "<unknown>"
 	if src != nil {
 		srcStr = src.String()
 	}
-	action := "PROXY"
-	if !shouldProxy {
-		action = "DIRECT"
+	actionText := logx.Bold(logx.Magenta(decision.action))
+	switch decision.action {
+	case routeActionDirect:
+		actionText = logx.Bold(logx.Green(decision.action))
+	case routeActionReject:
+		actionText = logx.Bold(logx.Red(decision.action))
 	}
-	actionText := logx.Bold(logx.Magenta(action))
-	if action == "DIRECT" {
-		actionText = logx.Bold(logx.Green(action))
-	}
-	logx.Infof(strings.ToUpper(strings.TrimSpace(network)), "%s --> %s match %s using %s", srcStr, destAddr, logx.Yellow(match), actionText)
+	logx.Infof(strings.ToUpper(strings.TrimSpace(network)), "%s --> %s match %s using %s", srcStr, destAddr, logx.Yellow(decision.match), actionText)
 }
 
 func resolveUDPAddr(ctx context.Context, addr string, resolver *dnsutil.Resolver) (*net.UDPAddr, error) {

@@ -28,7 +28,6 @@ import (
 	"github.com/SUDOKU-ASCII/sudoku/internal/config"
 	"github.com/SUDOKU-ASCII/sudoku/internal/tunnel"
 	"github.com/SUDOKU-ASCII/sudoku/pkg/dnsutil"
-	"github.com/SUDOKU-ASCII/sudoku/pkg/geodata"
 	"github.com/SUDOKU-ASCII/sudoku/pkg/logx"
 )
 
@@ -39,20 +38,22 @@ var directDial = func(network, addr string, timeout time.Duration) (net.Conn, er
 	return d.DialContext(ctx, network, addr)
 }
 
-func dialTarget(network string, src net.Addr, destAddrStr string, destIP net.IP, cfg *config.Config, geoMgr *geodata.Manager, dialer tunnel.Dialer, resolver *dnsutil.Resolver) (net.Conn, bool) {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	decision := decideRoute(ctx, cfg, geoMgr, destAddrStr, destIP, resolver)
-	cancel()
+func dialTarget(network string, src net.Addr, destAddrStr string, destIP net.IP, cfg *config.Config, routeMgrs *routeManagers, dialer tunnel.Dialer, resolver *dnsutil.Resolver) (net.Conn, routeDecision, bool) {
+	decision := decideRoute(cfg, routeMgrs, destAddrStr, destIP)
 
-	logRoute(network, src, destAddrStr, decision.match, decision.shouldProxy)
+	logRoute(network, src, destAddrStr, decision)
 
-	if decision.shouldProxy {
+	if decision.action == routeActionReject {
+		return nil, decision, false
+	}
+
+	if decision.shouldProxy() {
 		conn, err := dialProxyTarget(dialer, destAddrStr, tunnel.StickyKeyForAddress(destAddrStr, destIP))
 		if err != nil {
 			logx.Warnf("Proxy", "Dial Failed: %v", err)
-			return nil, false
+			return nil, decision, false
 		}
-		return conn, true
+		return conn, decision, true
 	}
 
 	directAddr := strings.TrimSpace(decision.directAddr)
@@ -72,9 +73,9 @@ func dialTarget(network string, src net.Addr, destAddrStr string, destIP net.IP,
 	}
 	if err != nil {
 		logx.Warnf("Direct", "Dial Failed: %v", err)
-		return nil, false
+		return nil, decision, false
 	}
-	return dConn, true
+	return dConn, decision, true
 }
 
 func dialProxyTarget(dialer tunnel.Dialer, destAddrStr string, stickyKey string) (net.Conn, error) {

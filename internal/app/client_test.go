@@ -35,6 +35,20 @@ import (
 	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
 )
 
+func newRuleManagerForTest(t *testing.T, payload string) *geodata.Manager {
+	t.Helper()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/yaml")
+		_, _ = w.Write([]byte(payload))
+	}))
+	t.Cleanup(srv.Close)
+
+	mgr := geodata.NewManager([]string{srv.URL})
+	mgr.Update()
+	return mgr
+}
+
 // MockConn implements net.Conn for testing
 type MockConn struct {
 	ReadBuf  *bytes.Buffer
@@ -80,28 +94,59 @@ func (m *MockDialer) Dial(destAddrStr string) (net.Conn, error) {
 	return NewMockConn(nil), nil
 }
 
-func TestDialTarget_PACAcceptsAnyMatchingIP(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/yaml")
-		_, _ = w.Write([]byte("payload:\n  - '1.2.3.0/24'\n"))
-	}))
-	t.Cleanup(srv.Close)
+func TestDialTarget_PACUnmatchedHostProxiesWithoutLocalDNS(t *testing.T) {
+	geoMgr := newRuleManagerForTest(t, "payload:\n  - '1.2.3.0/24'\n")
 
-	geoMgr := geodata.NewManager([]string{srv.URL})
-	geoMgr.Update()
-
-	oldLookup := lookupIPsWithCache
 	oldDirectDial := directDial
+	oldResolveWithCache := resolveWithCache
 	t.Cleanup(func() {
-		lookupIPsWithCache = oldLookup
 		directDial = oldDirectDial
+		resolveWithCache = oldResolveWithCache
 	})
 
-	lookupIPsWithCache = func(ctx context.Context, resolver *dnsutil.Resolver, host string) ([]net.IP, error) {
-		return []net.IP{
-			net.ParseIP("2001:db8::1"),
-			net.ParseIP("1.2.3.4"),
-		}, nil
+	directDial = func(network, addr string, timeout time.Duration) (net.Conn, error) {
+		t.Fatalf("unexpected direct dial: %s", addr)
+		return nil, nil
+	}
+	resolveWithCache = func(ctx context.Context, resolver *dnsutil.Resolver, addr string) (string, error) {
+		t.Fatalf("unexpected local resolve for unmatched PAC host: %s", addr)
+		return "", nil
+	}
+
+	cfg := &config.Config{ProxyMode: "pac"}
+	var proxyTarget string
+	dialer := &MockDialer{
+		DialFunc: func(destAddrStr string) (net.Conn, error) {
+			proxyTarget = destAddrStr
+			return NewMockConn(nil), nil
+		},
+	}
+
+	routeMgrs := &routeManagers{direct: geoMgr}
+	_, _, ok := dialTarget("TCP", nil, "foo.example:443", nil, cfg, routeMgrs, dialer, nil)
+	if !ok {
+		t.Fatalf("expected proxy dial success")
+	}
+	if proxyTarget != "foo.example:443" {
+		t.Fatalf("unexpected proxy target: %q", proxyTarget)
+	}
+}
+
+func TestDialTarget_PACDirectDomainStillResolvesForDirectDial(t *testing.T) {
+	geoMgr := newRuleManagerForTest(t, "payload:\n  - DOMAIN-SUFFIX,example.cn\n")
+
+	oldDirectDial := directDial
+	oldResolveWithCache := resolveWithCache
+	t.Cleanup(func() {
+		directDial = oldDirectDial
+		resolveWithCache = oldResolveWithCache
+	})
+
+	resolveWithCache = func(ctx context.Context, resolver *dnsutil.Resolver, addr string) (string, error) {
+		if addr != "foo.example.cn:443" {
+			t.Fatalf("unexpected resolve target: %s", addr)
+		}
+		return "1.2.3.4:443", nil
 	}
 
 	var dialed string
@@ -118,12 +163,97 @@ func TestDialTarget_PACAcceptsAnyMatchingIP(t *testing.T) {
 		},
 	}
 
-	_, ok := dialTarget("TCP", nil, "foo.example:443", nil, cfg, geoMgr, dialer, nil)
+	routeMgrs := &routeManagers{direct: geoMgr}
+	_, _, ok := dialTarget("TCP", nil, "foo.example.cn:443", nil, cfg, routeMgrs, dialer, nil)
 	if !ok {
 		t.Fatalf("expected direct dial success")
 	}
 	if dialed != "1.2.3.4:443" {
 		t.Fatalf("unexpected direct addr: %q", dialed)
+	}
+}
+
+func TestDialTarget_RejectSkipsOutboundDial(t *testing.T) {
+	rejectMgr := newRuleManagerForTest(t, "payload:\n  - DOMAIN-SUFFIX,ads.example\n")
+
+	oldDirectDial := directDial
+	t.Cleanup(func() {
+		directDial = oldDirectDial
+	})
+	directDial = func(network, addr string, timeout time.Duration) (net.Conn, error) {
+		t.Fatalf("unexpected direct dial: %s", addr)
+		return nil, nil
+	}
+
+	cfg := &config.Config{ProxyMode: "global"}
+	dialer := &MockDialer{
+		DialFunc: func(destAddrStr string) (net.Conn, error) {
+			t.Fatalf("unexpected proxy dial: %s", destAddrStr)
+			return nil, nil
+		},
+	}
+
+	conn, decision, ok := dialTarget("TCP", nil, "track.ads.example:443", nil, cfg, &routeManagers{reject: rejectMgr}, dialer, nil)
+	if ok {
+		t.Fatalf("expected reject route")
+	}
+	if conn != nil {
+		t.Fatalf("reject should not return a connection")
+	}
+	if decision.action != routeActionReject {
+		t.Fatalf("unexpected action: %s", decision.action)
+	}
+}
+
+func TestHandleMixedConn_HTTPRejectReturnsForbidden(t *testing.T) {
+	rejectMgr := newRuleManagerForTest(t, "payload:\n  - DOMAIN-SUFFIX,ads.example\n")
+
+	reqStr := "CONNECT track.ads.example:443 HTTP/1.1\r\nHost: track.ads.example:443\r\n\r\n"
+	conn := NewMockConn([]byte(reqStr))
+	cfg := &config.Config{ProxyMode: "global"}
+	table := sudoku.NewTable("key", "prefer_entropy")
+
+	handleMixedConn(conn, cfg, table, &routeManagers{reject: rejectMgr}, &MockDialer{
+		DialFunc: func(destAddrStr string) (net.Conn, error) {
+			t.Fatalf("unexpected proxy dial: %s", destAddrStr)
+			return nil, nil
+		},
+	}, nil)
+
+	if got := conn.WriteBuf.String(); got != "HTTP/1.1 403 Forbidden\r\n\r\n" {
+		t.Fatalf("unexpected HTTP reject response: %q", got)
+	}
+}
+
+func TestHandleMixedConn_SOCKS5RejectReturnsRulesetDeny(t *testing.T) {
+	rejectMgr := newRuleManagerForTest(t, "payload:\n  - DOMAIN-SUFFIX,ads.example\n")
+
+	input := []byte{
+		0x05, 0x01, 0x00,
+		0x05, 0x01, 0x00, 0x03, 0x11,
+		't', 'r', 'a', 'c', 'k', '.', 'a', 'd', 's', '.', 'e', 'x', 'a', 'm', 'p', 'l', 'e',
+		0x01, 0xbb,
+	}
+	conn := NewMockConn(input)
+	cfg := &config.Config{ProxyMode: "global"}
+	table := sudoku.NewTable("key", "prefer_entropy")
+
+	handleMixedConn(conn, cfg, table, &routeManagers{reject: rejectMgr}, &MockDialer{
+		DialFunc: func(destAddrStr string) (net.Conn, error) {
+			t.Fatalf("unexpected proxy dial: %s", destAddrStr)
+			return nil, nil
+		},
+	}, nil)
+
+	resp := conn.WriteBuf.Bytes()
+	if len(resp) < 12 {
+		t.Fatalf("short SOCKS5 response: %v", resp)
+	}
+	if resp[0] != 0x05 || resp[1] != 0x00 {
+		t.Fatalf("unexpected SOCKS5 method selection: %v", resp[:2])
+	}
+	if resp[3] != 0x02 {
+		t.Fatalf("expected ruleset deny reply, got %v", resp[2:12])
 	}
 }
 

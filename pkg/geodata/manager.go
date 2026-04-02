@@ -92,8 +92,7 @@ type ruleBuildState struct {
 	suffix map[string]struct{}
 }
 
-var instance *Manager
-var once sync.Once
+var instances sync.Map
 
 var newRuleDownloadClient = func() *http.Client {
 	return dnsutil.NewOutboundHTTPClient(30*time.Second, dnsutil.RecommendedClientResolver())
@@ -114,13 +113,24 @@ func newRuleBuildState() *ruleBuildState {
 	}
 }
 
-// GetInstance returns the singleton Manager.
+// GetInstance returns a cached Manager keyed by the rule URL set.
 func GetInstance(urls []string) *Manager {
-	once.Do(func() {
-		instance = NewManager(urls)
-		go instance.Update()
-	})
-	return instance
+	key := cacheKeyForURLs(urls)
+	if cached, ok := instances.Load(key); ok {
+		return cached.(*Manager)
+	}
+
+	mgr := NewManager(urls)
+	actual, loaded := instances.LoadOrStore(key, mgr)
+	if loaded {
+		return actual.(*Manager)
+	}
+	go mgr.Update()
+	return mgr
+}
+
+func cacheKeyForURLs(urls []string) string {
+	return strings.Join(append([]string(nil), urls...), "\x00")
 }
 
 func (m *Manager) Update() {

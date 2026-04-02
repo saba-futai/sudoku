@@ -35,7 +35,6 @@ import (
 	"github.com/SUDOKU-ASCII/sudoku/internal/tunnel"
 	"github.com/SUDOKU-ASCII/sudoku/pkg/connutil"
 	"github.com/SUDOKU-ASCII/sudoku/pkg/dnsutil"
-	"github.com/SUDOKU-ASCII/sudoku/pkg/geodata"
 	"github.com/SUDOKU-ASCII/sudoku/pkg/logx"
 	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
 )
@@ -48,7 +47,7 @@ func writeSocks5Reply(w io.Writer, rep byte) {
 	_, _ = w.Write([]byte{0x05, rep, 0x00, 0x01, 0, 0, 0, 0, 0, 0})
 }
 
-func handleClientSocks5(conn net.Conn, cfg *config.Config, _ *sudoku.Table, geoMgr *geodata.Manager, dialer tunnel.Dialer, resolver *dnsutil.Resolver) {
+func handleClientSocks5(conn net.Conn, cfg *config.Config, _ *sudoku.Table, routeMgrs *routeManagers, dialer tunnel.Dialer, resolver *dnsutil.Resolver) {
 	defer conn.Close()
 
 	buf := make([]byte, 262)
@@ -69,7 +68,7 @@ func handleClientSocks5(conn net.Conn, cfg *config.Config, _ *sudoku.Table, geoM
 	switch header[1] {
 	case 0x01: // CONNECT
 	case 0x03: // UDP ASSOCIATE
-		handleSocks5UDPAssociate(conn, cfg, geoMgr, dialer, resolver)
+		handleSocks5UDPAssociate(conn, cfg, routeMgrs, dialer, resolver)
 		return
 	default:
 		writeSocks5Reply(conn, 0x07) // Command not supported
@@ -81,9 +80,13 @@ func handleClientSocks5(conn net.Conn, cfg *config.Config, _ *sudoku.Table, geoM
 		return
 	}
 
-	targetConn, success := dialTarget("TCP", conn.RemoteAddr(), destAddrStr, destIP, cfg, geoMgr, dialer, resolver)
+	targetConn, decision, success := dialTarget("TCP", conn.RemoteAddr(), destAddrStr, destIP, cfg, routeMgrs, dialer, resolver)
 	if !success {
-		writeSocks5Reply(conn, 0x04) // Host unreachable
+		if decision.action == routeActionReject {
+			writeSocks5Reply(conn, 0x02) // Connection not allowed by ruleset
+		} else {
+			writeSocks5Reply(conn, 0x04) // Host unreachable
+		}
 		return
 	}
 
@@ -91,7 +94,7 @@ func handleClientSocks5(conn net.Conn, cfg *config.Config, _ *sudoku.Table, geoM
 	connutil.PipeConn(conn, targetConn)
 }
 
-func handleSocks5UDPAssociate(ctrl net.Conn, cfg *config.Config, geoMgr *geodata.Manager, dialer tunnel.Dialer, resolver *dnsutil.Resolver) {
+func handleSocks5UDPAssociate(ctrl net.Conn, cfg *config.Config, routeMgrs *routeManagers, dialer tunnel.Dialer, resolver *dnsutil.Resolver) {
 	uotDialer, ok := dialer.(tunnel.UoTDialer)
 	if !ok {
 		writeSocks5Reply(ctrl, 0x07)
@@ -123,7 +126,7 @@ func handleSocks5UDPAssociate(ctrl net.Conn, cfg *config.Config, geoMgr *geodata
 	}
 
 	logx.Infof("SOCKS5/UDP", "Associate ready on %s -> %s", udpConn.LocalAddr().String(), cfg.ServerAddress)
-	newUoTClientSession(ctrl, udpConn, uotConn, udpNet, cfg, geoMgr, resolver).run()
+	newUoTClientSession(ctrl, udpConn, uotConn, udpNet, cfg, routeMgrs, resolver).run()
 }
 
 func buildUDPAssociateReply(host net.IP, port int, localIP net.IP, remoteIP net.IP) []byte {
@@ -332,13 +335,13 @@ func initialUDPAssociateClientIP(ip net.IP) net.IP {
 }
 
 type uotClientSession struct {
-	ctrlConn net.Conn
-	udpConn  *net.UDPConn
-	uotConn  net.Conn
-	udpNet   string
-	cfg      *config.Config
-	geoMgr   *geodata.Manager
-	resolver *dnsutil.Resolver
+	ctrlConn  net.Conn
+	udpConn   *net.UDPConn
+	uotConn   net.Conn
+	udpNet    string
+	cfg       *config.Config
+	routeMgrs *routeManagers
+	resolver  *dnsutil.Resolver
 
 	closeOnce sync.Once
 	closed    chan struct{}
@@ -353,14 +356,14 @@ type uotClientSession struct {
 	logOnce         ttlSet
 }
 
-func newUoTClientSession(ctrl net.Conn, udpConn *net.UDPConn, uotConn net.Conn, udpNet string, cfg *config.Config, geoMgr *geodata.Manager, resolver *dnsutil.Resolver) *uotClientSession {
+func newUoTClientSession(ctrl net.Conn, udpConn *net.UDPConn, uotConn net.Conn, udpNet string, cfg *config.Config, routeMgrs *routeManagers, resolver *dnsutil.Resolver) *uotClientSession {
 	return &uotClientSession{
 		ctrlConn:        ctrl,
 		udpConn:         udpConn,
 		uotConn:         uotConn,
 		udpNet:          udpNet,
 		cfg:             cfg,
-		geoMgr:          geoMgr,
+		routeMgrs:       routeMgrs,
 		resolver:        resolver,
 		closed:          make(chan struct{}),
 		allowedClientIP: initialUDPAssociateClientIP(ipFromNetAddr(ctrl.RemoteAddr())),
@@ -432,17 +435,29 @@ func (s *uotClientSession) pipeClientToServer() {
 		s.setClientAddr(addr)
 
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		decision := decideRoute(ctx, s.cfg, s.geoMgr, destAddr, destIP, s.resolver)
-		shouldProxy, match, actionKey := decision.shouldProxy, decision.match, "PROXY"
+		decision := decideRoute(s.cfg, s.routeMgrs, destAddr, destIP)
+		actionKey := decision.action
 
+		if decision.action == routeActionReject {
+			if s.logOnce.Allow(actionKey+"|"+destAddr, s.logTTL) {
+				logRoute("UDP", addr, destAddr, decision)
+			}
+			cancel()
+			continue
+		}
+
+		shouldProxy := decision.shouldProxy()
 		if !shouldProxy {
 			directAddr, err := resolveUDPAddr(ctx, decision.directAddr, s.resolver)
 			if err != nil {
-				shouldProxy, match = true, match+"/RESOLVE_FAIL"
+				decision.action = routeActionProxy
+				decision.match += "/RESOLVE_FAIL"
+				shouldProxy = true
 			} else if directAddr != nil && directAddr.IP != nil && directAddr.IP.To4() == nil && s.udpNet == "udp4" {
-				shouldProxy, match = true, match+"/IPV6->PROXY"
+				decision.action = routeActionProxy
+				decision.match += "/IPV6->PROXY"
+				shouldProxy = true
 			} else if directAddr != nil {
-				actionKey = "DIRECT"
 				s.peers.Add(peerKey(directAddr), s.peerTTL)
 				if _, err := s.udpConn.WriteToUDP(payload, directAddr); err != nil {
 					s.close()
@@ -460,8 +475,8 @@ func (s *uotClientSession) pipeClientToServer() {
 			}
 		}
 
-		if s.logOnce.Allow(actionKey+"|"+destAddr, s.logTTL) {
-			logRoute("UDP", addr, destAddr, match, shouldProxy)
+		if s.logOnce.Allow(decision.action+"|"+destAddr, s.logTTL) {
+			logRoute("UDP", addr, destAddr, decision)
 		}
 		cancel()
 	}

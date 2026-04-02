@@ -19,15 +19,19 @@ with this application without prior consent.
 */
 package config
 
+const (
+	DefaultPACRejectRuleURL      = "https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Clash.yaml"
+	DefaultImplicitRejectRuleURL = "https://fastly.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Clash.yaml"
+)
+
 // DefaultPACRuleURLs returns the recommended PAC rule sources.
 //
 // The list is intentionally small and CDN-friendly, and should cover both IPv4 and IPv6 CN traffic.
 func DefaultPACRuleURLs() []string {
 	return []string{
-		"https://fastly.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/BiliBili/BiliBili.list",
-		"https://fastly.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/WeChat/WeChat.list",
 		"https://fastly.jsdelivr.net/gh/blackmatrix7/ios_rule_script@master/rule/Clash/ChinaMaxNoIP/ChinaMaxNoIP.list",
 		"https://fastly.jsdelivr.net/gh/fernvenue/chn-cidr-list@master/ipv4.yaml",
 		"https://fastly.jsdelivr.net/gh/fernvenue/chn-cidr-list@master/ipv6.yaml",
+		RejectRulePrefix + DefaultPACRejectRuleURL,
 	}
 }
