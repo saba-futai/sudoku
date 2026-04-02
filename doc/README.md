@@ -180,6 +180,8 @@ Routing modes (client):
 - `rule_urls: ["global"]` (default): proxy everything
 - `rule_urls: ["direct"]`: proxy nothing (debug only)
 - `rule_urls: [...]` (URLs): PAC mode, direct for CN/local rules and proxy the rest
+- `rule_urls: ["!https://..."]` or mixed `!https://...` entries: reject-rule sources; matched domains are blocked before any outbound connection is made
+- `global` and `direct` also load a hidden default reject list from `https://fastly.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Clash.yaml`
 
 ## Cloudflare CDN (Orange Cloud)
 Sudoku can run through a CDN/proxy only in real HTTP tunnel modes: `stream` / `poll` / `auto` (or `ws`). `legacy` mode is not CDN-compatible.
@@ -411,6 +413,8 @@ KIP 消息类型：
 - `rule_urls: ["global"]`（默认）：全局代理
 - `rule_urls: ["direct"]`：全直连（仅用于调试）
 - `rule_urls: [...]`（URL 列表）：PAC 模式，命中 CN/local 规则走直连，其他走代理
+- `rule_urls` 里的 `!https://...` / `！https://...`：reject 规则源，命中域名时在发起任何外连前直接拒绝
+- `global` 与 `direct` 也会隐式加载 `https://fastly.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Clash.yaml` 作为默认去广告 reject 规则
 
 ## 过 Cloudflare CDN（小黄云）
 Sudoku 只有在真实 HTTP 隧道模式下才能过 CDN/代理：`stream` / `poll` / `auto`（或 `ws`）；`legacy` 模式不兼容 CDN。

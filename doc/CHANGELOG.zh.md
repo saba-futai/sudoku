@@ -3,6 +3,14 @@
 ## Unreleased
 - TBD
 
+## v0.4.1（2026-04-02）
+- `proxy/pac`: `rule_urls` 新增 `!https://...` / `！https://...` reject 规则源语义；命中 reject 规则的域名会在客户端侧直接拒绝，不再发起 TCP/UDP 外连，用于默认去广告与显式拦截场景。
+- `proxy/pac`: `global` / `direct` 模式现在会隐式加载 AWAvenue Ads Reject 规则作为默认去广告集，但不会把该规则显式写入配置；PAC 示例配置则保留一条可见的 `!gcore...AWAvenue...yaml` reject 规则示例。
+- `proxy/pac`: 收窄 PAC 域名判定逻辑。域名若未命中直连规则，不再额外用本地 223 DoH 回查 IP 归属，而是直接走代理；仅在已命中直连域名规则后，继续使用现有内置 resolver 解析直连目标。
+- `config`: 默认 PAC 示例移除冗余的 `BiliBili` / `WeChat` 规则项，仅保留 `ChinaMaxNoIP + CN CIDR v4/v6`，避免与已有大中华规则集重复。
+- `geodata`: 规则管理器从单全局实例收敛为按 URL 集合缓存的实例，允许直连规则集与 reject 规则集同时存在，降低耦合并避免后续扩展继续叠加状态隐患。
+- `tests`: 补充 reject 路由、HTTP/SOCKS 拒绝反馈，以及“PAC 未命中域名直接代理、命中直连域名后再解析”的回归测试；同时通过 `go vet ./...` 与本地等价 release workflow 的 `go test ./... -count=1 -shuffle=on -v -race` 校验。
+
 ## v0.3.8（2026-03-28）
 - `httpmask/fallback`: 修复启用 HTTPMask 时的链式回落缺口。外层在 `stream/poll` 的 `/session` early-handshake 拒绝后，现在会把已读 HTTP 前缀完整回放给内层，恢复 `ws/auto/poll` 场景下的 fallback 中转能力。
 - `tests`: 将 HTTPMask 链式回落回归测试扩成模式矩阵，覆盖 `ws/auto/poll` 与 `auth reject/early reject` 组合，同时保留正常 HTTPMask 直连基线校验。

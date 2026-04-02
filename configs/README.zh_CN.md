@@ -179,6 +179,8 @@ ssh -p 2222 127.0.0.1
 - `["global"]`：全局代理
 - `["direct"]`：全直连
 - URL 列表：下载规则文件并按规则分流
+- `!https://...` / `！https://...`：reject 规则源，命中域名时会在发起任何外连前直接拒绝
+- `["global"]` 和 `["direct"]` 也会默认隐式启用 `https://fastly.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Clash.yaml` 这份 reject 规则
 
 中国大陆适用举例：
-- 模板 `configs/client.config.json` 默认给了一组 PAC 规则 URL（BiliBili/WeChat/ChinaMaxNoIP + CN CIDR v4/v6），可直接用作示例再按需增删。
+- 模板 `configs/client.config.json` 默认给了一组 PAC 规则 URL（ChinaMaxNoIP + CN CIDR v4/v6），并额外演示了 `!https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Clash.yaml` 这种 reject 规则写法。

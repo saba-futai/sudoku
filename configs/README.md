@@ -179,6 +179,8 @@ Raw TCP forwarding (one per server entry):
 - `["global"]`: proxy everything
 - `["direct"]`: proxy nothing
 - URL list: download rule files and route accordingly
+- `!https://...` / `！https://...`: reject rule source; matched domains are blocked before any outbound connection is made
+- `["global"]` and `["direct"]` still apply the built-in hidden reject list via `https://fastly.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Clash.yaml`
 
 Mainland China example:
-- The default `configs/client.config.json` uses a PAC URL list suitable as an example for Mainland China users (BiliBili/WeChat/ChinaMaxNoIP + CN CIDR v4/v6).
+- The default `configs/client.config.json` uses `ChinaMaxNoIP + CN CIDR v4/v6`, plus `!https://gcore.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Clash.yaml` as a visible reject-rule example.
