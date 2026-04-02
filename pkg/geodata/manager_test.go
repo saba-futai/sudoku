@@ -61,6 +61,23 @@ func TestParseRule_NormalizesDomainEntries(t *testing.T) {
 	}
 }
 
+func TestParseRule_AcceptsBareDomainEntries(t *testing.T) {
+	state := &ruleBuildState{
+		exact:  make(map[string]struct{}),
+		suffix: make(map[string]struct{}),
+	}
+
+	parseRule("'ad.qq.com'", state)
+	parseRule("+.ads.example.com", state)
+
+	if _, ok := state.exact["ad.qq.com"]; !ok {
+		t.Fatalf("expected bare domain entry to be parsed as exact domain")
+	}
+	if _, ok := state.suffix["ads.example.com"]; !ok {
+		t.Fatalf("expected +. bare domain entry to be parsed as suffix domain")
+	}
+}
+
 func TestIsCN_IPv6RuleMatch(t *testing.T) {
 	m := &Manager{
 		domainExact:  make(map[string]struct{}),
@@ -151,6 +168,29 @@ func TestDownloadAndParse_UsesRuleDownloadClient(t *testing.T) {
 
 	if _, ok := state.suffix["example.cn"]; !ok {
 		t.Fatalf("expected rules downloaded through injected client")
+	}
+}
+
+func TestDownloadAndParse_YAMLBareDomains(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte("payload:\n  - 'ad.qq.com'\n  - '+.ads.example.com'\n"))
+	}))
+	t.Cleanup(srv.Close)
+
+	state := &ruleBuildState{
+		exact:  make(map[string]struct{}),
+		suffix: make(map[string]struct{}),
+	}
+	m := &Manager{}
+	if !m.downloadAndParse(srv.URL, state) {
+		t.Fatalf("expected downloadAndParse to succeed")
+	}
+
+	if _, ok := state.exact["ad.qq.com"]; !ok {
+		t.Fatalf("expected bare yaml domain to be parsed as exact domain")
+	}
+	if _, ok := state.suffix["ads.example.com"]; !ok {
+		t.Fatalf("expected +. yaml domain to be parsed as suffix domain")
 	}
 }
 

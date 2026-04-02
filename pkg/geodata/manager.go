@@ -30,6 +30,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/SUDOKU-ASCII/sudoku/pkg/dnsutil"
 	"github.com/SUDOKU-ASCII/sudoku/pkg/logx"
@@ -256,14 +257,17 @@ func parseRule(line string, state *ruleBuildState) {
 	}
 
 	// 2. Try parsing as plain CIDR or IP.
-	parseIPLine(line, state)
+	if parseIPLine(line, state) {
+		return
+	}
+	parseBareDomainLine(line, state)
 }
 
-func parseIPLine(line string, state *ruleBuildState) {
+func parseIPLine(line string, state *ruleBuildState) bool {
 	line = strings.Trim(line, "'\"")
 	line = strings.TrimSpace(line)
 	if line == "" {
-		return
+		return false
 	}
 
 	if _, ipNet, err := net.ParseCIDR(line); err == nil {
@@ -272,11 +276,11 @@ func parseIPLine(line string, state *ruleBuildState) {
 			mask := binary.BigEndian.Uint32(ipNet.Mask)
 			end := start | (^mask)
 			state.ipv4 = append(state.ipv4, IPRange{Start: start, End: end})
-			return
+			return true
 		}
 		ip16 := ipNet.IP.To16()
 		if ip16 == nil {
-			return
+			return false
 		}
 		var start [16]byte
 		var end [16]byte
@@ -289,25 +293,74 @@ func parseIPLine(line string, state *ruleBuildState) {
 			end[i] = start[i] | (^mask)
 		}
 		state.ipv6 = append(state.ipv6, IPv6Range{Start: start, End: end})
-		return
+		return true
 	}
 
 	ip := net.ParseIP(line)
 	if ip == nil {
-		return
+		return false
 	}
 	if ip4 := ip.To4(); ip4 != nil {
 		val := ipToUint32(ip4)
 		state.ipv4 = append(state.ipv4, IPRange{Start: val, End: val})
-		return
+		return true
 	}
 	ip16 := ip.To16()
 	if ip16 == nil {
-		return
+		return false
 	}
 	var v6 [16]byte
 	copy(v6[:], ip16)
 	state.ipv6 = append(state.ipv6, IPv6Range{Start: v6, End: v6})
+	return true
+}
+
+func parseBareDomainLine(line string, state *ruleBuildState) bool {
+	raw := strings.TrimSpace(strings.Trim(line, "'\""))
+	if raw == "" {
+		return false
+	}
+
+	isSuffix := false
+	switch {
+	case strings.HasPrefix(raw, "+."):
+		raw = strings.TrimPrefix(raw, "+.")
+		isSuffix = true
+	case strings.HasPrefix(raw, "."):
+		raw = strings.TrimPrefix(raw, ".")
+		isSuffix = true
+	}
+
+	domain := normalizeRuleDomain(raw)
+	if !looksLikeDomainRule(domain) {
+		return false
+	}
+
+	if isSuffix {
+		state.suffix[domain] = struct{}{}
+		return true
+	}
+	state.exact[domain] = struct{}{}
+	return true
+}
+
+func looksLikeDomainRule(v string) bool {
+	if v == "" || net.ParseIP(v) != nil || strings.ContainsAny(v, "/:,_ ") {
+		return false
+	}
+	labels := strings.Split(v, ".")
+	for _, label := range labels {
+		if label == "" {
+			return false
+		}
+		for _, r := range label {
+			if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '-' {
+				continue
+			}
+			return false
+		}
+	}
+	return true
 }
 
 func normalizeRuleDomain(v string) string {
