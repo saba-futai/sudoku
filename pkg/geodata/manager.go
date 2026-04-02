@@ -61,12 +61,13 @@ type IPv6Range struct {
 }
 
 type Manager struct {
-	ipRanges     []IPRange
-	ipv6Ranges   []IPv6Range
-	domainExact  map[string]struct{} // Exact match: DOMAIN
-	domainSuffix map[string]struct{} // Suffix match: DOMAIN-SUFFIX
-	mu           sync.RWMutex
-	urls         []string
+	ipRanges      []IPRange
+	ipv6Ranges    []IPv6Range
+	domainExact   map[string]struct{} // Exact match: DOMAIN
+	domainKeyword map[string]struct{} // Keyword match: DOMAIN-KEYWORD
+	domainSuffix  map[string]struct{} // Suffix match: DOMAIN-SUFFIX
+	mu            sync.RWMutex
+	urls          []string
 }
 
 type Match struct {
@@ -87,10 +88,11 @@ type RuleSet struct {
 }
 
 type ruleBuildState struct {
-	ipv4   []IPRange
-	ipv6   []IPv6Range
-	exact  map[string]struct{}
-	suffix map[string]struct{}
+	ipv4    []IPRange
+	ipv6    []IPv6Range
+	exact   map[string]struct{}
+	keyword map[string]struct{}
+	suffix  map[string]struct{}
 }
 
 var instances sync.Map
@@ -101,16 +103,18 @@ var newRuleDownloadClient = func() *http.Client {
 
 func NewManager(urls []string) *Manager {
 	return &Manager{
-		urls:         append([]string(nil), urls...),
-		domainExact:  make(map[string]struct{}),
-		domainSuffix: make(map[string]struct{}),
+		urls:          append([]string(nil), urls...),
+		domainExact:   make(map[string]struct{}),
+		domainKeyword: make(map[string]struct{}),
+		domainSuffix:  make(map[string]struct{}),
 	}
 }
 
 func newRuleBuildState() *ruleBuildState {
 	return &ruleBuildState{
-		exact:  make(map[string]struct{}),
-		suffix: make(map[string]struct{}),
+		exact:   make(map[string]struct{}),
+		keyword: make(map[string]struct{}),
+		suffix:  make(map[string]struct{}),
 	}
 }
 
@@ -162,12 +166,14 @@ func (m *Manager) applyRuleState(state *ruleBuildState) {
 	mergedIPv4 := mergeRanges(ipv4)
 	mergedIPv6 := mergeIPv6Ranges(ipv6)
 	exact := cloneRuleSet(state.exact)
+	keyword := cloneRuleSet(state.keyword)
 	suffix := cloneRuleSet(state.suffix)
 
 	m.mu.Lock()
 	m.ipRanges = mergedIPv4
 	m.ipv6Ranges = mergedIPv6
 	m.domainExact = exact
+	m.domainKeyword = keyword
 	m.domainSuffix = suffix
 	m.mu.Unlock()
 }
@@ -245,6 +251,10 @@ func parseRule(line string, state *ruleBuildState) {
 		case "DOMAIN":
 			if v := normalizeRuleDomain(ruleValue); v != "" {
 				state.exact[v] = struct{}{}
+			}
+		case "DOMAIN-KEYWORD":
+			if v := normalizeRuleKeyword(ruleValue); v != "" {
+				state.keyword[v] = struct{}{}
 			}
 		case "DOMAIN-SUFFIX":
 			if v := normalizeRuleDomain(ruleValue); v != "" {
@@ -371,6 +381,12 @@ func normalizeRuleDomain(v string) string {
 	return v
 }
 
+func normalizeRuleKeyword(v string) string {
+	v = strings.Trim(v, "'\"")
+	v = strings.TrimSpace(strings.ToLower(v))
+	return v
+}
+
 func normalizeLookupHost(host string) string {
 	host = strings.TrimSpace(host)
 	if host == "" {
@@ -420,6 +436,11 @@ func (m *Manager) MatchCN(host string, ip net.IP) (bool, Match) {
 		domain := host
 		if _, ok := m.domainExact[domain]; ok {
 			return true, Match{Kind: "DOMAIN", Value: domain}
+		}
+		for keyword := range m.domainKeyword {
+			if strings.Contains(domain, keyword) {
+				return true, Match{Kind: "DOMAIN-KEYWORD", Value: keyword}
+			}
 		}
 
 		parts := strings.Split(domain, ".")

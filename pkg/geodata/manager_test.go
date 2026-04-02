@@ -46,15 +46,20 @@ func TestIsCN_HostPortMatchesDomainRules(t *testing.T) {
 
 func TestParseRule_NormalizesDomainEntries(t *testing.T) {
 	state := &ruleBuildState{
-		exact:  make(map[string]struct{}),
-		suffix: make(map[string]struct{}),
+		exact:   make(map[string]struct{}),
+		keyword: make(map[string]struct{}),
+		suffix:  make(map[string]struct{}),
 	}
 
 	parseRule("DOMAIN, API.BiliBili.Com.", state)
+	parseRule("DOMAIN-KEYWORD,BiliBili", state)
 	parseRule("DOMAIN-SUFFIX,.BiliBili.Com", state)
 
 	if _, ok := state.exact["api.bilibili.com"]; !ok {
 		t.Fatalf("expected normalized exact domain entry")
+	}
+	if _, ok := state.keyword["bilibili"]; !ok {
+		t.Fatalf("expected normalized keyword domain entry")
 	}
 	if _, ok := state.suffix["bilibili.com"]; !ok {
 		t.Fatalf("expected normalized suffix domain entry")
@@ -63,8 +68,9 @@ func TestParseRule_NormalizesDomainEntries(t *testing.T) {
 
 func TestParseRule_AcceptsBareDomainEntries(t *testing.T) {
 	state := &ruleBuildState{
-		exact:  make(map[string]struct{}),
-		suffix: make(map[string]struct{}),
+		exact:   make(map[string]struct{}),
+		keyword: make(map[string]struct{}),
+		suffix:  make(map[string]struct{}),
 	}
 
 	parseRule("'ad.qq.com'", state)
@@ -84,8 +90,9 @@ func TestIsCN_IPv6RuleMatch(t *testing.T) {
 		domainSuffix: make(map[string]struct{}),
 	}
 	state := &ruleBuildState{
-		exact:  make(map[string]struct{}),
-		suffix: make(map[string]struct{}),
+		exact:   make(map[string]struct{}),
+		keyword: make(map[string]struct{}),
+		suffix:  make(map[string]struct{}),
 	}
 
 	parseRule("IP-CIDR6,2400:3200::/32", state)
@@ -107,8 +114,9 @@ func TestParseRule_IPv6DoesNotPolluteIPv4Ranges(t *testing.T) {
 		domainSuffix: make(map[string]struct{}),
 	}
 	state := &ruleBuildState{
-		exact:  make(map[string]struct{}),
-		suffix: make(map[string]struct{}),
+		exact:   make(map[string]struct{}),
+		keyword: make(map[string]struct{}),
+		suffix:  make(map[string]struct{}),
 	}
 
 	parseRule("IP-CIDR6,2400:3200::/32", state)
@@ -160,8 +168,9 @@ func TestDownloadAndParse_UsesRuleDownloadClient(t *testing.T) {
 	}
 
 	state := &ruleBuildState{
-		exact:  make(map[string]struct{}),
-		suffix: make(map[string]struct{}),
+		exact:   make(map[string]struct{}),
+		keyword: make(map[string]struct{}),
+		suffix:  make(map[string]struct{}),
 	}
 	m := &Manager{}
 	m.downloadAndParse("http://resolver.test:"+serverPort+"/rules", state)
@@ -178,8 +187,9 @@ func TestDownloadAndParse_YAMLBareDomains(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	state := &ruleBuildState{
-		exact:  make(map[string]struct{}),
-		suffix: make(map[string]struct{}),
+		exact:   make(map[string]struct{}),
+		keyword: make(map[string]struct{}),
+		suffix:  make(map[string]struct{}),
 	}
 	m := &Manager{}
 	if !m.downloadAndParse(srv.URL, state) {
@@ -191,6 +201,20 @@ func TestDownloadAndParse_YAMLBareDomains(t *testing.T) {
 	}
 	if _, ok := state.suffix["ads.example.com"]; !ok {
 		t.Fatalf("expected +. yaml domain to be parsed as suffix domain")
+	}
+}
+
+func TestMatchCN_DomainKeywordRuleMatch(t *testing.T) {
+	m := &Manager{
+		domainExact:   make(map[string]struct{}),
+		domainKeyword: map[string]struct{}{"bilibili": {}},
+		domainSuffix:  make(map[string]struct{}),
+	}
+
+	if ok, match := m.MatchCN("api.bilibili.com:443", nil); !ok {
+		t.Fatalf("expected keyword domain match")
+	} else if match.Kind != "DOMAIN-KEYWORD" || match.Value != "bilibili" {
+		t.Fatalf("unexpected keyword match: %+v", match)
 	}
 }
 
