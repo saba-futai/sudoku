@@ -21,7 +21,6 @@ package sudoku
 
 import (
 	"io"
-	"math/rand"
 	"net"
 	"sync"
 
@@ -84,7 +83,7 @@ func newRandomPaddingPolicy(cfg downlinkPacingConfig) *randomPaddingPolicy {
 
 // ShouldInject applies a lightweight size gate plus random probability. This keeps the
 // feature stochastic without needing a separate sustained-burst state machine.
-func (p *randomPaddingPolicy) ShouldInject(plainBytes int, estimate downlinkWireSizeEstimator, rng *rand.Rand) bool {
+func (p *randomPaddingPolicy) ShouldInject(plainBytes int, estimate downlinkWireSizeEstimator, rng randomSource) bool {
 	if p == nil || rng == nil || estimate == nil {
 		return false
 	}
@@ -103,13 +102,14 @@ func (p *randomPaddingPolicy) ShouldInject(plainBytes int, estimate downlinkWire
 type interPacketPaddingInjector struct {
 	writer       io.Writer
 	paddingPool  []byte
-	rng          *rand.Rand
+	rng          randomSource
 	minPacketLen int
 	maxPacketLen int
 	jitter       int
+	packetBuf    []byte
 }
 
-func newInterPacketPaddingInjector(writer io.Writer, paddingPool []byte, rng *rand.Rand, cfg downlinkPacingConfig) *interPacketPaddingInjector {
+func newInterPacketPaddingInjector(writer io.Writer, paddingPool []byte, rng randomSource, cfg downlinkPacingConfig) *interPacketPaddingInjector {
 	return &interPacketPaddingInjector{
 		writer:       writer,
 		paddingPool:  append([]byte(nil), paddingPool...),
@@ -128,7 +128,10 @@ func (i *interPacketPaddingInjector) Inject(plainBytes int) error {
 	}
 
 	packetLen := i.pickPacketLen(plainBytes)
-	packet := make([]byte, packetLen)
+	if cap(i.packetBuf) < packetLen {
+		i.packetBuf = make([]byte, packetLen)
+	}
+	packet := i.packetBuf[:packetLen]
 	for idx := range packet {
 		packet[idx] = i.paddingPool[i.rng.Intn(len(i.paddingPool))]
 	}
@@ -201,7 +204,7 @@ func newDownlinkPacingWriterWithConfig(
 	raw io.Writer,
 	paddingPool []byte,
 	estimate downlinkWireSizeEstimator,
-	rng *rand.Rand,
+	rng randomSource,
 	cfg downlinkPacingConfig,
 ) *DownlinkPacingWriter {
 	return &DownlinkPacingWriter{
@@ -235,16 +238,18 @@ func (w *DownlinkPacingWriter) Write(p []byte) (int, error) {
 type sudokuDataWriter struct {
 	writer           io.Writer
 	table            *Table
-	rng              *rand.Rand
+	rng              randomSource
 	paddingThreshold uint64
+	writeBuf         []byte
 }
 
-func newSudokuDataWriter(writer io.Writer, table *Table, rng *rand.Rand, pMin, pMax int) *sudokuDataWriter {
+func newSudokuDataWriter(writer io.Writer, table *Table, rng randomSource, pMin, pMax int) *sudokuDataWriter {
 	return &sudokuDataWriter{
 		writer:           writer,
 		table:            table,
 		rng:              rng,
 		paddingThreshold: pickPaddingThreshold(rng, pMin, pMax),
+		writeBuf:         make([]byte, 0, 4096),
 	}
 }
 
@@ -252,13 +257,20 @@ func (w *sudokuDataWriter) Write(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
-	out := encodeSudokuPayload(w.table, w.rng, w.paddingThreshold, p)
-	return len(p), connutil.WriteFull(w.writer, out)
+	w.writeBuf = encodeSudokuPayload(w.writeBuf[:0], w.table, w.rng, w.paddingThreshold, p)
+	return len(p), connutil.WriteFull(w.writer, w.writeBuf)
 }
 
-func encodeSudokuPayload(table *Table, rng *rand.Rand, paddingThreshold uint64, p []byte) []byte {
-	outCapacity := len(p) * 6
-	out := make([]byte, 0, outCapacity)
+func encodeSudokuPayload(dst []byte, table *Table, rng randomSource, paddingThreshold uint64, p []byte) []byte {
+	if len(p) == 0 {
+		return dst[:0]
+	}
+
+	outCapacity := len(p)*6 + 1
+	if cap(dst) < outCapacity {
+		dst = make([]byte, 0, outCapacity)
+	}
+	out := dst[:0]
 	pads := table.PaddingPool
 	padLen := len(pads)
 

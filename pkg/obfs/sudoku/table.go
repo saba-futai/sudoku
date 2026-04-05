@@ -130,7 +130,7 @@ func newSingleDirectionTable(key string, mode string, customPattern string) (*Ta
 			}
 			var currentHints [4]byte
 			for i, p := range rawParts {
-				currentHints[i] = t.layout.encodeHint(p.val-1, p.pos)
+				currentHints[i] = t.layout.hintByte(p.val-1, p.pos)
 			}
 			t.EncodeTable[byteVal] = append(t.EncodeTable[byteVal], currentHints)
 			key := packHintsToKey(currentHints)

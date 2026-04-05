@@ -23,9 +23,9 @@ import (
 	"bufio"
 	"bytes"
 	"io"
-	"math/rand"
 	"net"
 	"sync"
+	"sync/atomic"
 
 	"github.com/SUDOKU-ASCII/sudoku/pkg/connutil"
 )
@@ -49,12 +49,12 @@ type PackedConn struct {
 	reader *bufio.Reader
 
 	recorder   *bytes.Buffer
-	recording  bool
+	recording  atomic.Bool
 	recordLock sync.Mutex
 
 	// Read buffer
 	rawBuf      []byte
-	pendingData []byte // Decoded bytes not yet consumed by Read
+	pendingData pendingBuffer // Decoded bytes not yet consumed by Read
 
 	// Write buffer and state
 	writeMu  sync.Mutex
@@ -67,7 +67,7 @@ type PackedConn struct {
 	readBits   int    // number of valid pending bits in readBitBuf
 
 	// RNG and padding control — uses integer-threshold random, consistent with Conn
-	rng              *rand.Rand
+	rng              randomSource
 	paddingThreshold uint64 // Same probability model as Conn
 	padMarker        byte
 	padPool          []byte
@@ -99,7 +99,7 @@ func NewPackedConnWithRecord(c net.Conn, table *Table, pMin, pMax int, record bo
 		table:            table,
 		reader:           bufio.NewReaderSize(c, IOBufferSize),
 		rawBuf:           make([]byte, IOBufferSize),
-		pendingData:      make([]byte, 0, 4096),
+		pendingData:      newPendingBuffer(4096),
 		writeBuf:         make([]byte, 0, 4096),
 		rng:              localRng,
 		paddingThreshold: pickPaddingThreshold(localRng, pMin, pMax),
@@ -116,14 +116,14 @@ func NewPackedConnWithRecord(c net.Conn, table *Table, pMin, pMax int, record bo
 	}
 	if record {
 		pc.recorder = new(bytes.Buffer)
-		pc.recording = true
+		pc.recording.Store(true)
 	}
 	return pc
 }
 
 func (pc *PackedConn) StopRecording() {
 	pc.recordLock.Lock()
-	pc.recording = false
+	pc.recording.Store(false)
 	pc.recorder = nil
 	pc.recordLock.Unlock()
 }
@@ -162,7 +162,7 @@ func (pc *PackedConn) maybeAddPadding(out []byte) []byte {
 
 func (pc *PackedConn) appendGroup(out []byte, group byte) []byte {
 	out = pc.maybeAddPadding(out)
-	return append(out, pc.encodeGroup(group))
+	return append(out, pc.table.layout.groupByte(group))
 }
 
 func (pc *PackedConn) appendForcedPadding(out []byte) []byte {
@@ -343,7 +343,7 @@ func (pc *PackedConn) Flush() error {
 		pc.bitBuf = 0
 		pc.bitCount = 0
 
-		out = append(out, pc.encodeGroup(group&0x3F))
+		out = append(out, pc.table.layout.groupByte(group&0x3F))
 		out = append(out, pc.padMarker)
 	}
 
@@ -368,11 +368,13 @@ func (pc *PackedConn) Read(p []byte) (int, error) {
 	for {
 		nr, rErr := pc.reader.Read(pc.rawBuf)
 		if nr > 0 {
-			pc.recordLock.Lock()
-			if pc.recording {
-				pc.recorder.Write(pc.rawBuf[:nr])
+			if pc.recording.Load() {
+				pc.recordLock.Lock()
+				if pc.recording.Load() && pc.recorder != nil {
+					pc.recorder.Write(pc.rawBuf[:nr])
+				}
+				pc.recordLock.Unlock()
 			}
-			pc.recordLock.Unlock()
 
 			// Cache frequently accessed variables
 			rBuf := pc.readBitBuf
@@ -381,7 +383,7 @@ func (pc *PackedConn) Read(p []byte) (int, error) {
 			layout := pc.table.layout
 
 			for _, b := range pc.rawBuf[:nr] {
-				if !layout.isHint(b) {
+				if !layout.hintTable[b] {
 					if b == padMarker {
 						rBuf = 0
 						rBits = 0
@@ -389,7 +391,7 @@ func (pc *PackedConn) Read(p []byte) (int, error) {
 					continue
 				}
 
-				group, ok := layout.decodeGroup(b)
+				group, ok := layout.decodePackedGroup(b)
 				if !ok {
 					return 0, ErrInvalidSudokuMapMiss
 				}
@@ -400,7 +402,12 @@ func (pc *PackedConn) Read(p []byte) (int, error) {
 				if rBits >= 8 {
 					rBits -= 8
 					val := byte(rBuf >> rBits)
-					pc.pendingData = append(pc.pendingData, val)
+					pc.pendingData.appendByte(val)
+					if rBits == 0 {
+						rBuf = 0
+					} else {
+						rBuf &= (uint64(1) << rBits) - 1
+					}
 				}
 			}
 
@@ -413,13 +420,13 @@ func (pc *PackedConn) Read(p []byte) (int, error) {
 				pc.readBitBuf = 0
 				pc.readBits = 0
 			}
-			if len(pc.pendingData) > 0 {
+			if pc.pendingData.available() > 0 {
 				break
 			}
 			return 0, rErr
 		}
 
-		if len(pc.pendingData) > 0 {
+		if pc.pendingData.available() > 0 {
 			break
 		}
 	}
@@ -432,9 +439,4 @@ func (pc *PackedConn) Read(p []byte) (int, error) {
 // getPaddingByte picks a random padding byte from the pool.
 func (pc *PackedConn) getPaddingByte() byte {
 	return pc.padPool[pc.rng.Intn(len(pc.padPool))]
-}
-
-// encodeGroup encodes a 6-bit group.
-func (pc *PackedConn) encodeGroup(group byte) byte {
-	return pc.table.layout.encodeGroup(group)
 }
