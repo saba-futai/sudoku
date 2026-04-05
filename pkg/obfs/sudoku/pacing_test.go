@@ -22,7 +22,6 @@ package sudoku
 import (
 	"bytes"
 	"io"
-	"math/rand"
 	"net"
 	"testing"
 )
@@ -34,7 +33,7 @@ func TestRandomPaddingPolicy_SizeGateAndProbability(t *testing.T) {
 	cfg.injectChanceDenominator = 1
 
 	policy := newRandomPaddingPolicy(cfg)
-	rng := rand.New(rand.NewSource(1))
+	rng := newSudokuRand(1)
 	if policy.ShouldInject(3, minEncodedSudokuBytes, rng) {
 		t.Fatalf("small write should not trigger pacing")
 	}
@@ -186,11 +185,11 @@ func countNonHintBytes(data []byte, table *Table) int {
 
 func newTestSudokuPacingWriter(raw io.Writer, table *Table, cfg downlinkPacingConfig) *DownlinkPacingWriter {
 	return newDownlinkPacingWriterWithConfig(
-		newSudokuDataWriter(raw, table, rand.New(rand.NewSource(1)), 0, 0),
+		newSudokuDataWriter(raw, table, newSudokuRand(1), 0, 0),
 		raw,
 		table.PaddingPool,
 		minEncodedSudokuBytes,
-		rand.New(rand.NewSource(2)),
+		newSudokuRand(2),
 		cfg,
 	)
 }
@@ -202,7 +201,7 @@ func newTestPackedPacingWriter(raw net.Conn, table *Table, cfg downlinkPacingCon
 		raw,
 		packedInterPacketPaddingPool(table),
 		minEncodedPackedBytes,
-		rand.New(rand.NewSource(3)),
+		newSudokuRand(3),
 		cfg,
 	)
 }

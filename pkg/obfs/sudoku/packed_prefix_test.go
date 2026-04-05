@@ -3,7 +3,6 @@ package sudoku
 import (
 	"bytes"
 	"io"
-	"math/rand"
 	"testing"
 )
 
@@ -11,7 +10,7 @@ func TestPackedConn_ProtectedPrefixPadding(t *testing.T) {
 	table := NewTable("packed-prefix-seed", "prefer_ascii")
 	mock := &MockConn{}
 	writer := NewPackedConn(mock, table, 0, 0)
-	writer.rng = rand.New(rand.NewSource(1))
+	writer.rng = newSudokuRand(1)
 
 	payload := bytes.Repeat([]byte{0}, 32)
 	if _, err := writer.Write(payload); err != nil {
