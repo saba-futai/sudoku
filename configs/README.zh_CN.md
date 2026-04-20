@@ -138,6 +138,7 @@
     "client_id": "client-1",
     "routes": [
       { "path": "/gitea", "target": "127.0.0.1:3000", "strip_prefix": true },
+      { "path": "/intra", "target": "gitea.intra.example.com:3000" },
       { "path": "/ssh", "target": "127.0.0.1:22" }
     ]
   }
@@ -146,14 +147,14 @@
 
 - 服务端配置只需要设置 `reverse.listen` 来开启入口端口；要暴露哪些服务永远由客户端 `routes` 决定。
 - 反向代理会默认把客户端上行切到 `packed`，以降低 reverse-proxy 场景的客户端上行带宽压力；普通正向代理流量仍保持 `pure` 上行。
-- 服务端目前仍兼容旧版 `pure` 上行的 reverse 客户端，但这条兼容路径已经标记为废弃，后续会移除。
+- reverse 会话现在要求使用 `packed` 上行；注册反向代理时应使用内置的 reverse helper，而不是 `DialBase`。
 - `listen`（服务端）：对外暴露的入口地址。
 - `client_id`（客户端）：可选的标识，用于多客户端的区分/管理。
 - `routes`（客户端）：要暴露的服务列表。
   - `path`：HTTP 的路径前缀；或 TCP-over-WebSocket 的精确路径。
-  - `target`：客户端本地 `host:port`。
+  - `target`：客户端侧的 `host:port`，其中 host 可以是 IP，也可以是域名。
   - `strip_prefix`：是否去掉前缀后再转发（默认 `true`）。
-  - `host_header`：可选，覆盖转发时的 `Host`。
+  - `host_header`：可选，覆盖转发时的 `Host`；如果不填且 `target` 使用域名 host，则默认把该目标 host 透传给上游。
 
 TCP-over-WebSocket（本地转发器）：
 ```bash

@@ -20,7 +20,7 @@ with this application without prior consent.
 package config
 
 // ReverseConfig enables "reverse proxy over Sudoku tunnel": a client behind NAT keeps a tunnel to the server,
-// and the server exposes client services via HTTP path prefixes (e.g. /gitea -> 127.0.0.1:3000 on client).
+// and the server exposes client services via HTTP path prefixes (e.g. /gitea -> gitea.intra.example.com:3000 on client).
 //
 // - Server mode: set Listen (e.g. ":8081") to start the reverse HTTP entry.
 // - Client mode: set Routes to expose local services to the server.
@@ -36,6 +36,7 @@ type ReverseConfig struct {
 
 	// Routes is the list of client services to expose.
 	// Each route maps a public path prefix to a client-side TCP target (HTTP service).
+	// Targets may use either an IP literal or a domain name.
 	Routes []ReverseRoute `json:"routes,omitempty"`
 }
 
@@ -46,11 +47,13 @@ type ReverseRoute struct {
 	// In that case, the server will forward non-HTTP connections to Target.
 	// Only one TCP route is supported per reverse.listen entry.
 	Path string `json:"path"`
-	// Target is the client-side TCP target in "host:port" form. Example: "127.0.0.1:3000".
+	// Target is the client-side TCP target in "host:port" form.
+	// The host may be an IP literal or a domain name.
 	Target string `json:"target"`
 	// StripPrefix controls whether the prefix should be stripped before proxying.
 	// Default: true.
 	StripPrefix *bool `json:"strip_prefix,omitempty"`
 	// HostHeader optionally overrides the HTTP Host header when proxying.
+	// When empty and Target uses a domain host, the proxy forwards that target host by default.
 	HostHeader string `json:"host_header,omitempty"`
 }

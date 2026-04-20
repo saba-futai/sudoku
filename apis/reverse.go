@@ -82,6 +82,7 @@ func (m *ReverseManager) HandleServerSession(conn net.Conn, userHash string, hel
 
 // DialReverseClientSession dials the server and runs a reverse registration session until it ends.
 // Reverse sessions use packed uplink by default; normal proxy sessions remain pure-uplink.
+// Pure-uplink reverse sessions are rejected by the server.
 //
 // This function returns when the reverse session ends; callers usually want to reconnect with backoff.
 func DialReverseClientSession(ctx context.Context, cfg *ProtocolConfig, clientID string, routes []ReverseRoute) error {

@@ -48,6 +48,9 @@ func HandleServerSession(conn net.Conn, userHash string, mgr *Manager, helloPayl
 	if mgr == nil {
 		return fmt.Errorf("reverse manager not configured")
 	}
+	if packed, ok := tunnel.ConnUplinkPacked(conn); ok && !packed {
+		return fmt.Errorf("reverse sessions require packed uplink")
+	}
 
 	if len(helloPayload) == 0 || len(helloPayload) > maxHelloBytes {
 		return fmt.Errorf("invalid reverse hello size: %d", len(helloPayload))

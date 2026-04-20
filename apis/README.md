@@ -215,7 +215,7 @@ case apis.SessionReverse:
 ```
 
 ## 反向代理（Reverse Proxy over Sudoku）
-服务端创建一个 `ReverseManager` 作为 `http.Handler`，并在隧道连接上调用 `HandleServerSession`；客户端应优先使用 `DialReverseClientSession`，它会在 reverse 会话上自动强制 `packed` 上行，而普通代理流量仍保持 `pure` 上行：
+服务端创建一个 `ReverseManager` 作为 `http.Handler`，并在隧道连接上调用 `HandleServerSession`；客户端应使用 `DialReverseClientSession`，它会在 reverse 会话上自动使用 `packed` 上行，而普通代理流量仍保持 `pure` 上行：
 
 ```go
 mgr := apis.NewReverseManager()
@@ -226,12 +226,14 @@ _ = mgr.HandleServerSession(tunnelConn, userHash)
 
 // Client side:
 _ = apis.DialReverseClientSession(ctx, cfg, "client-id", []apis.ReverseRoute{
-	{Path: "/gitea", Target: "127.0.0.1:3000"},
+	{Path: "/gitea", Target: "gitea.intra.example.com:3000"},
 })
 ```
 
-兼容说明：
-- 旧写法 `DialBase` + `ServeReverseClientSession` 目前仍可工作，但它走的是 legacy `pure` 上行 reverse，仅用于兼容旧实现，后续会变为不兼容。
+说明：
+- reverse 会话现在要求 `packed` 上行；`DialBase` + `ServeReverseClientSession` 这类 legacy `pure` 上行 reverse 已不再兼容。
+- `ReverseRoute.Target` 仍然是 `host:port`，其中 host 可以是 IP，也可以是域名。
+- 如果 `ReverseRoute.Target` 使用域名 host 且未显式设置 `HostHeader`，HTTP 反代会默认把该目标 host 作为上游 `Host` 转发。
 
 ## 说明
 - `DefaultConfig()` 提供合理默认值，仍需设置 `Key`、`Table` 及对应的地址字段。

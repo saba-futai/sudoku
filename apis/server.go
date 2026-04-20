@@ -348,5 +348,5 @@ func serverHandshakeCoreWithUserHash(rawConn net.Conn, cfg *ProtocolConfig) (net
 	sConn.StopRecording()
 
 	rawConn.SetReadDeadline(time.Time{})
-	return cConn, userHash, fail, nil
+	return tunnel.WrapConnWithObfsMeta(cConn, selected.UplinkMode), userHash, fail, nil
 }

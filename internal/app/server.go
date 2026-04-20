@@ -226,9 +226,6 @@ func handleSudokuServerConn(handshakeConn net.Conn, rawConn net.Conn, cfg *confi
 			logx.Warnf("Server/Reverse", "reverse proxy not enabled (missing reverse.listen)")
 			return
 		}
-		if packed, ok := tunnel.ConnUplinkPacked(tunnelConn); ok && !packed {
-			logUserWarn("Server/Reverse", userHash, "legacy pure-uplink reverse client detected; compatibility is temporary and will be removed in a future release")
-		}
 		logUserInfo("Server/Reverse", userHash, "session start")
 		if err := reverse.HandleServerSession(tunnelConn, userHash, revMgr, msg.Payload); err != nil {
 			logUserWarn("Server/Reverse", userHash, "session end: %v", err)

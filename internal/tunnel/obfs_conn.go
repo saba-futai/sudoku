@@ -56,11 +56,15 @@ func (c *connWithObfsMeta) SudokuUplinkPacked() bool {
 	return c.uplinkPacked
 }
 
-func wrapConnWithObfsMeta(conn net.Conn, uplinkMode ObfsUplinkMode) net.Conn {
+func WrapConnWithObfsMeta(conn net.Conn, uplinkMode ObfsUplinkMode) net.Conn {
 	if conn == nil {
 		return nil
 	}
 	return &connWithObfsMeta{Conn: conn, uplinkPacked: uplinkMode == ObfsUplinkPacked}
+}
+
+func wrapConnWithObfsMeta(conn net.Conn, uplinkMode ObfsUplinkMode) net.Conn {
+	return WrapConnWithObfsMeta(conn, uplinkMode)
 }
 
 type downlinkWriterSwitcher interface {

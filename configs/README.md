@@ -138,6 +138,7 @@ Client routes:
     "client_id": "client-1",
     "routes": [
       { "path": "/gitea", "target": "127.0.0.1:3000", "strip_prefix": true },
+      { "path": "/intra", "target": "gitea.intra.example.com:3000" },
       { "path": "/ssh", "target": "127.0.0.1:22" }
     ]
   }
@@ -146,14 +147,14 @@ Client routes:
 
 - Server config only needs `reverse.listen` to open the entry port. Routes are always defined on the client.
 - Reverse sessions now default to `packed` uplink on the client side to reduce reverse-proxy upload overhead. Normal forward proxy traffic still keeps `pure` uplink.
-- Legacy reverse clients that still use `pure` uplink remain temporarily accepted by the server for compatibility, but this path is deprecated and will become incompatible later.
+- Reverse sessions now require `packed` uplink. Use the built-in reverse helpers instead of `DialBase` for reverse registration.
 - `listen` (server): the public reverse entry address.
 - `client_id` (client): optional identifier for multi-client routing/management.
 - `routes` (client): array of services to expose.
   - `path`: URL path prefix (for HTTP) or exact path (for TCP-over-WebSocket).
-  - `target`: client-side `host:port`.
+  - `target`: client-side `host:port`; the host may be an IP literal or a domain name.
   - `strip_prefix`: whether to remove the prefix before proxying (default `true`).
-  - `host_header`: optional override for upstream `Host`.
+  - `host_header`: optional override for upstream `Host`. If omitted and `target` uses a domain host, that target host is forwarded by default.
 
 TCP-over-WebSocket (client-side local forwarder):
 ```bash

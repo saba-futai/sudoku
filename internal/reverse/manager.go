@@ -356,7 +356,8 @@ func pathPrefixMatch(path, prefix string) bool {
 }
 
 func newRouteProxy(prefix, target string, stripPrefix bool, hostHeader string, mux *tunnel.MuxClient) *httputil.ReverseProxy {
-	targetURL := &url.URL{Scheme: "http", Host: "reverse.internal"}
+	targetURL := &url.URL{Scheme: "http", Host: target}
+	defaultHostHeader := defaultUpstreamHostHeader(target)
 	rp := httputil.NewSingleHostReverseProxy(targetURL)
 
 	// Each reverse request uses a fresh mux stream; do not let net/http attempt to keep idle conns.
@@ -385,6 +386,8 @@ func newRouteProxy(prefix, target string, stripPrefix bool, hostHeader string, m
 		}
 		if hostHeader != "" {
 			req.Host = hostHeader
+		} else if defaultHostHeader != "" {
+			req.Host = defaultHostHeader
 		}
 		if prefix != "" && prefix != "/" {
 			req.Header.Set("X-Forwarded-Prefix", prefix)
