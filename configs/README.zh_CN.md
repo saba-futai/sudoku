@@ -37,7 +37,7 @@
   "padding_max": 15,
   "ascii": "prefer_entropy",
   "enable_pure_downlink": true,
-  "httpmask": { "disable": false, "mode": "legacy" }
+  "httpmask": { "disable": false, "mode": "auto" }
 }
 ```
 
@@ -53,7 +53,7 @@
   "padding_max": 15,
   "ascii": "prefer_entropy",
   "enable_pure_downlink": true,
-  "httpmask": { "disable": false, "mode": "legacy" },
+  "httpmask": { "disable": false, "mode": "ws" },
   "rule_urls": ["global"]
 }
 ```
@@ -75,7 +75,7 @@
 - `key`：
   - 服务端：填 **Master Public Key**
   - 客户端：填 **Available Private Key**
-- `aead`：`"chacha20-poly1305"` / `"aes-128-gcm"` / `"none"`（仅测试）。
+- `aead`：`"chacha20-poly1305"` / `"aes-128-gcm"` / `"none"`。
 
 ### Sudoku 编码与填充
 - `ascii`：
@@ -88,8 +88,7 @@
 - `custom_tables`：可选的布局列表；非空时会在每条连接中轮换布局。
 - 方向模式补充说明：
   - `custom_table` 只会作用在 `ascii` 为 `entropy` 的那个方向上。
-  - 只有当客户端上行是 `entropy`（`prefer_entropy` / `up_entropy_down_ascii`）时，`custom_tables` 才能完整轮换，因为服务端需要从客户端探测流量里识别所选布局。
-  - 对于 `up_ascii_down_entropy`，下行仍会使用自定义布局，但 `custom_tables` 会自动收敛到第一项，因为仅作用于下行的多组布局无法通过上行探测区分。
+  - `custom_tables` 在方向模式中同样会按连接轮换；客户端会在握手中携带表提示，服务端据此选择对应布局。
 - `enable_pure_downlink`：
   - `true`：上下行都用经典 Sudoku 编码
   - `false`：启用带宽优化下行（需要 AEAD 且两端必须一致）

@@ -14,7 +14,7 @@
   "enable_pure_downlink": true,
   "httpmask": {
     "disable": false,
-    "mode": "legacy",
+    "mode": "auto",
     "tls": false,
     "host": "",
     "path_root": "",

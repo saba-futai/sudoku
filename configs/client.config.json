@@ -13,7 +13,7 @@
   "enable_pure_downlink": true,
   "httpmask": {
     "disable": false,
-    "mode": "legacy",
+    "mode": "ws",
     "tls": false,
     "host": "",
     "path_root": "",

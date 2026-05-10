@@ -37,7 +37,7 @@ Server (basic TCP):
   "padding_max": 15,
   "ascii": "prefer_entropy",
   "enable_pure_downlink": true,
-  "httpmask": { "disable": false, "mode": "legacy" }
+  "httpmask": { "disable": false, "mode": "auto" }
 }
 ```
 
@@ -53,7 +53,7 @@ Client (basic TCP):
   "padding_max": 15,
   "ascii": "prefer_entropy",
   "enable_pure_downlink": true,
-  "httpmask": { "disable": false, "mode": "legacy" },
+  "httpmask": { "disable": false, "mode": "ws" },
   "rule_urls": ["global"]
 }
 ```
@@ -75,7 +75,7 @@ Client (basic TCP):
 - `key`:
   - server: **Master Public Key**
   - client: **Available Private Key**
-- `aead`: `"chacha20-poly1305"` / `"aes-128-gcm"` / `"none"` (testing only).
+- `aead`: `"chacha20-poly1305"` / `"aes-128-gcm"` / `"none"`.
 
 ### Sudoku encoding & padding
 - `ascii`:
@@ -88,8 +88,7 @@ Client (basic TCP):
 - `custom_tables`: optional array of layouts; if non-empty it rotates layouts per connection.
 - Directional mode note:
   - `custom_table` applies only on the direction whose `ascii` side is `entropy`.
-  - `custom_tables` can rotate fully only when the client uplink is `entropy` (`prefer_entropy` / `up_entropy_down_ascii`), because the server must identify the selected layout from the client probe.
-  - With `up_ascii_down_entropy`, the downlink still uses a custom layout, but `custom_tables` collapses to the first entry because multiple downlink-only layouts are not probe-distinguishable.
+  - `custom_tables` also rotates in directional modes; the client sends a table hint during the handshake so the server can select the matching layout.
 - `enable_pure_downlink`:
   - `true`: both directions use classic Sudoku encoding
   - `false`: packed downlink mode to reduce overhead (both ends must match)
