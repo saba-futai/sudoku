@@ -423,10 +423,18 @@ func matchIPv6Range(ranges []IPv6Range, ip net.IP) bool {
 }
 
 func (m *Manager) MatchCN(host string, ip net.IP) (bool, Match) {
+	return m.match(host, ip, true)
+}
+
+func (m *Manager) MatchRule(host string, ip net.IP) (bool, Match) {
+	return m.match(host, ip, false)
+}
+
+func (m *Manager) match(host string, ip net.IP, includeLocal bool) (bool, Match) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 
-	if m.isLocalNetwork(ip) {
+	if includeLocal && m.isLocalNetwork(ip) {
 		return true, Match{Kind: "LOCAL"}
 	}
 

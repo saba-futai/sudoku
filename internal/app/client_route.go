@@ -52,6 +52,7 @@ const (
 
 type routeManagers struct {
 	direct *geodata.Manager
+	proxy  *geodata.Manager
 	reject *geodata.Manager
 }
 
@@ -59,15 +60,18 @@ func buildRouteManagers(cfg *config.Config) *routeManagers {
 	if cfg == nil {
 		return nil
 	}
-	directURLs, rejectURLs := config.RuntimeRuleURLs(cfg.ProxyMode, cfg.RuleURLs)
+	directURLs, proxyURLs, rejectURLs := config.RuntimeRuleURLs(cfg.ProxyMode, cfg.RuleURLs)
 	mgrs := &routeManagers{}
 	if len(directURLs) > 0 {
 		mgrs.direct = geodata.GetInstance(directURLs)
 	}
+	if len(proxyURLs) > 0 {
+		mgrs.proxy = geodata.GetInstance(proxyURLs)
+	}
 	if len(rejectURLs) > 0 {
 		mgrs.reject = geodata.GetInstance(rejectURLs)
 	}
-	if mgrs.direct == nil && mgrs.reject == nil {
+	if mgrs.direct == nil && mgrs.proxy == nil && mgrs.reject == nil {
 		return nil
 	}
 	return mgrs
@@ -84,6 +88,8 @@ func (m *routeManagers) managerForAction(action string) *geodata.Manager {
 	switch action {
 	case routeActionDirect:
 		return m.direct
+	case routeActionProxy:
+		return m.proxy
 	case routeActionReject:
 		return m.reject
 	default:
@@ -100,6 +106,9 @@ func decideRoute(cfg *config.Config, mgrs *routeManagers, destAddr string, destI
 
 	if matched, match, _ := matchRuleManager(mgrs, routeActionReject, destAddr, destIP); matched {
 		return routeDecision{action: routeActionReject, match: match, directAddr: destAddr}
+	}
+	if matched, match, _ := matchRuleManager(mgrs, routeActionProxy, destAddr, destIP); matched {
+		return routeDecision{action: routeActionProxy, match: match, directAddr: destAddr}
 	}
 
 	switch cfg.ProxyMode {
@@ -130,10 +139,11 @@ func matchRuleManager(mgrs *routeManagers, action string, destAddr string, destI
 		return false, "", ""
 	}
 
-	if ok, m := mgr.MatchCN(destAddr, destIP); ok {
-		if action == routeActionReject && m.Kind == "LOCAL" {
-			return false, "", ""
-		}
+	ok, m := mgr.MatchCN(destAddr, destIP)
+	if action != routeActionDirect {
+		ok, m = mgr.MatchRule(destAddr, destIP)
+	}
+	if ok {
 		return true, action + "/" + m.String(), destAddr
 	}
 	return false, "", ""

@@ -108,6 +108,24 @@ func TestIsCN_IPv6RuleMatch(t *testing.T) {
 	}
 }
 
+func TestMatchRule_ExcludesImplicitLocalNetwork(t *testing.T) {
+	m := &Manager{
+		domainExact:  make(map[string]struct{}),
+		domainSuffix: make(map[string]struct{}),
+	}
+	ip := net.ParseIP("192.168.1.10")
+	if ip == nil {
+		t.Fatalf("parse test ip failed")
+	}
+
+	if ok, match := m.MatchCN("192.168.1.10:80", ip); !ok || match.Kind != "LOCAL" {
+		t.Fatalf("expected implicit local MatchCN result, got %t %+v", ok, match)
+	}
+	if ok, match := m.MatchRule("192.168.1.10:80", ip); ok {
+		t.Fatalf("unexpected explicit rule match: %+v", match)
+	}
+}
+
 func TestParseRule_IPv6DoesNotPolluteIPv4Ranges(t *testing.T) {
 	m := &Manager{
 		domainExact:  make(map[string]struct{}),

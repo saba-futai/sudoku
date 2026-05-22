@@ -179,7 +179,8 @@ ssh -p 2222 127.0.0.1
 - `["global"]`：全局代理
 - `["direct"]`：全直连
 - URL 列表：下载规则文件并按规则分流
-- `!https://...` / `！https://...`：reject 规则源，命中域名时会在发起任何外连前直接拒绝
+- `-https://...` / `_https://...`：proxy 规则源，命中域名即使也命中直连规则也会走代理
+- `!https://...` / `！https://...` / `?https://...`：reject 规则源，命中域名时会在发起任何外连前直接拒绝
 - `["global"]` 和 `["direct"]` 也会默认隐式启用 `https://fastly.jsdelivr.net/gh/TG-Twilight/AWAvenue-Ads-Rule@main/Filters/AWAvenue-Ads-Rule-Clash.yaml` 这份 reject 规则
 
 中国大陆适用举例：
