@@ -20,6 +20,7 @@ with this application without prior consent.
 package sudoku
 
 import (
+	"io"
 	"net"
 	"testing"
 )
@@ -36,5 +37,47 @@ func TestConnWrite_Empty(t *testing.T) {
 	}
 	if n, err := conn.Write([]byte{}); err != nil || n != 0 {
 		t.Fatalf("Write(empty) = (%d, %v), want (0, nil)", n, err)
+	}
+}
+
+func TestConnInvalidStateReturnsError(t *testing.T) {
+	var classic *Conn
+	if n, err := classic.Write([]byte("x")); n != 0 || err != io.ErrClosedPipe {
+		t.Fatalf("nil Conn Write = (%d, %v), want (0, io.ErrClosedPipe)", n, err)
+	}
+	if n, err := classic.Read(make([]byte, 1)); n != 0 || err != io.ErrClosedPipe {
+		t.Fatalf("nil Conn Read = (%d, %v), want (0, io.ErrClosedPipe)", n, err)
+	}
+	classic.StopRecording()
+	if got := classic.GetBufferedAndRecorded(); got != nil {
+		t.Fatalf("nil Conn recorded = %v, want nil", got)
+	}
+}
+
+func TestPackedConnInvalidStateReturnsError(t *testing.T) {
+	var packed *PackedConn
+	if n, err := packed.Write([]byte("x")); n != 0 || err != io.ErrClosedPipe {
+		t.Fatalf("nil PackedConn Write = (%d, %v), want (0, io.ErrClosedPipe)", n, err)
+	}
+	if err := packed.Flush(); err != io.ErrClosedPipe {
+		t.Fatalf("nil PackedConn Flush = %v, want io.ErrClosedPipe", err)
+	}
+	if n, err := packed.Read(make([]byte, 1)); n != 0 || err != io.ErrClosedPipe {
+		t.Fatalf("nil PackedConn Read = (%d, %v), want (0, io.ErrClosedPipe)", n, err)
+	}
+	packed.StopRecording()
+	if got := packed.GetBufferedAndRecorded(); got != nil {
+		t.Fatalf("nil PackedConn recorded = %v, want nil", got)
+	}
+
+	table := NewTable("invalid-state", "prefer_ascii")
+	malformed := &PackedConn{
+		Conn:             &MockConn{},
+		table:            table,
+		rng:              newSudokuRand(1),
+		paddingThreshold: probOne,
+	}
+	if n, err := malformed.Write([]byte("x")); n != 0 || err != io.ErrClosedPipe {
+		t.Fatalf("malformed PackedConn Write = (%d, %v), want (0, io.ErrClosedPipe)", n, err)
 	}
 }

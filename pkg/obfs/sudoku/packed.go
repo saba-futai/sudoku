@@ -31,9 +31,6 @@ import (
 )
 
 const (
-	// RngBatchSize controls how many random numbers to batch per RNG pull (micro-optimization).
-	RngBatchSize = 128
-
 	packedProtectedPrefixBytes = 14
 )
 
@@ -67,7 +64,7 @@ type PackedConn struct {
 	readBits   int    // number of valid pending bits in readBitBuf
 
 	// RNG and padding control — uses integer-threshold random, consistent with Conn
-	rng              randomSource
+	rng              *sudokuRand
 	paddingThreshold uint64 // Same probability model as Conn
 	padMarker        byte
 	padPool          []byte
@@ -98,17 +95,19 @@ func NewPackedConnWithRecord(c net.Conn, table *Table, pMin, pMax int, record bo
 		Conn:             c,
 		table:            table,
 		reader:           bufio.NewReaderSize(c, PackedIOBufferSize),
-		rawBuf:           make([]byte, PackedIOBufferSize),
+		rawBuf:           make([]byte, PackedDecodeBufferSize),
 		pendingData:      newPendingBuffer(4096),
 		writeBuf:         make([]byte, 0, 4096),
 		rng:              localRng,
 		paddingThreshold: pickPaddingThreshold(localRng, pMin, pMax),
 	}
 
-	pc.padMarker = table.layout.padMarker
-	for _, b := range table.PaddingPool {
-		if b != pc.padMarker {
-			pc.padPool = append(pc.padPool, b)
+	if table != nil && table.layout != nil {
+		pc.padMarker = table.layout.padMarker
+		for _, b := range table.PaddingPool {
+			if b != pc.padMarker {
+				pc.padPool = append(pc.padPool, b)
+			}
 		}
 	}
 	if len(pc.padPool) == 0 {
@@ -122,6 +121,9 @@ func NewPackedConnWithRecord(c net.Conn, table *Table, pMin, pMax int, record bo
 }
 
 func (pc *PackedConn) StopRecording() {
+	if pc == nil {
+		return
+	}
 	pc.recordLock.Lock()
 	pc.recording.Store(false)
 	pc.recorder = nil
@@ -140,6 +142,9 @@ func (pc *PackedConn) GetBufferedAndRecorded() []byte {
 	if pc.recorder != nil {
 		recorded = pc.recorder.Bytes()
 	}
+	if pc.reader == nil {
+		return recorded
+	}
 
 	buffered := pc.reader.Buffered()
 	if buffered > 0 {
@@ -150,21 +155,6 @@ func (pc *PackedConn) GetBufferedAndRecorded() []byte {
 		return full
 	}
 	return recorded
-}
-
-// maybeAddPadding inserts a padding byte with the same probability model as Conn.
-func (pc *PackedConn) maybeAddPadding(out []byte) []byte {
-	if pc.paddingThreshold != 0 && shouldPad(pc.rng, pc.paddingThreshold) {
-		out = append(out, pc.getPaddingByte())
-	}
-	return out
-}
-
-func (pc *PackedConn) appendGroup(out []byte, group byte) []byte {
-	if pc.paddingThreshold != 0 && shouldPad(pc.rng, pc.paddingThreshold) {
-		out = append(out, pc.getPaddingByte())
-	}
-	return append(out, pc.table.layout.groupByte(group))
 }
 
 func (pc *PackedConn) appendForcedPadding(out []byte) []byte {
@@ -202,7 +192,7 @@ func (pc *PackedConn) writeProtectedPrefix(out []byte, p []byte) ([]byte, int) {
 			} else {
 				pc.bitBuf &= (1 << pc.bitCount) - 1
 			}
-			out = pc.appendGroup(out, group&0x3F)
+			out = appendPackedGroup(out, pc.table.layout, pc.rng, pc.paddingThreshold, pc.padPool, group)
 		}
 
 		effective++
@@ -216,10 +206,33 @@ func (pc *PackedConn) writeProtectedPrefix(out []byte, p []byte) ([]byte, int) {
 	return out, limit
 }
 
+func appendPackedGroup(out []byte, layout *byteLayout, rng *sudokuRand, paddingThreshold uint64, padPool []byte, group byte) []byte {
+	if paddingThreshold != 0 {
+		u := rng.Uint32()
+		if uint64(u) < paddingThreshold {
+			out = append(out, padPool[fastIntnFromUint32(rng.Uint32(), len(padPool))])
+		}
+	}
+	return append(out, layout.encodeGroup[group&0x3F])
+}
+
+func maybeAppendPackedPadding(out []byte, rng *sudokuRand, paddingThreshold uint64, padPool []byte) []byte {
+	if paddingThreshold != 0 {
+		u := rng.Uint32()
+		if uint64(u) < paddingThreshold {
+			out = append(out, padPool[fastIntnFromUint32(rng.Uint32(), len(padPool))])
+		}
+	}
+	return out
+}
+
 // Write encodes bytes into 6-bit groups and writes the corresponding hint bytes.
 func (pc *PackedConn) Write(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
+	}
+	if pc == nil || pc.Conn == nil || pc.table == nil || pc.table.layout == nil || pc.rng == nil || len(pc.padPool) == 0 {
+		return 0, io.ErrClosedPipe
 	}
 
 	pc.writeMu.Lock()
@@ -234,6 +247,10 @@ func (pc *PackedConn) Write(p []byte) (int, error) {
 		pc.writeBuf = make([]byte, 0, needed)
 	}
 	out := pc.writeBuf[:0]
+	layout := pc.table.layout
+	rng := pc.rng
+	paddingThreshold := pc.paddingThreshold
+	padPool := pc.padPool
 
 	prefixN := 0
 	out, prefixN = pc.writeProtectedPrefix(out, p)
@@ -246,7 +263,7 @@ func (pc *PackedConn) Write(p []byte) (int, error) {
 
 	// 2. Header alignment (Slow Path)
 	for pc.bitCount > 0 && i < n {
-		out = pc.maybeAddPadding(out)
+		out = maybeAppendPackedPadding(out, rng, paddingThreshold, padPool)
 		b := p[i]
 		i++
 		pc.bitBuf = (pc.bitBuf << 8) | uint64(b)
@@ -259,7 +276,7 @@ func (pc *PackedConn) Write(p []byte) (int, error) {
 			} else {
 				pc.bitBuf &= (1 << pc.bitCount) - 1
 			}
-			out = pc.appendGroup(out, group&0x3F)
+			out = appendPackedGroup(out, layout, rng, paddingThreshold, padPool, group)
 		}
 	}
 
@@ -275,10 +292,10 @@ func (pc *PackedConn) Write(p []byte) (int, error) {
 			g3 := ((b2 & 0x0F) << 2) | ((b3 >> 6) & 0x03)
 			g4 := b3 & 0x3F
 
-			out = pc.appendGroup(out, g1)
-			out = pc.appendGroup(out, g2)
-			out = pc.appendGroup(out, g3)
-			out = pc.appendGroup(out, g4)
+			out = appendPackedGroup(out, layout, rng, paddingThreshold, padPool, g1)
+			out = appendPackedGroup(out, layout, rng, paddingThreshold, padPool, g2)
+			out = appendPackedGroup(out, layout, rng, paddingThreshold, padPool, g3)
+			out = appendPackedGroup(out, layout, rng, paddingThreshold, padPool, g4)
 		}
 	}
 
@@ -292,10 +309,10 @@ func (pc *PackedConn) Write(p []byte) (int, error) {
 		g3 := ((b2 & 0x0F) << 2) | ((b3 >> 6) & 0x03)
 		g4 := b3 & 0x3F
 
-		out = pc.appendGroup(out, g1)
-		out = pc.appendGroup(out, g2)
-		out = pc.appendGroup(out, g3)
-		out = pc.appendGroup(out, g4)
+		out = appendPackedGroup(out, layout, rng, paddingThreshold, padPool, g1)
+		out = appendPackedGroup(out, layout, rng, paddingThreshold, padPool, g2)
+		out = appendPackedGroup(out, layout, rng, paddingThreshold, padPool, g3)
+		out = appendPackedGroup(out, layout, rng, paddingThreshold, padPool, g4)
 	}
 
 	// 5. Tail processing (Tail Path) — handle remaining 1 or 2 bytes
@@ -311,7 +328,7 @@ func (pc *PackedConn) Write(p []byte) (int, error) {
 			} else {
 				pc.bitBuf &= (1 << pc.bitCount) - 1
 			}
-			out = pc.appendGroup(out, group&0x3F)
+			out = appendPackedGroup(out, layout, rng, paddingThreshold, padPool, group)
 		}
 	}
 
@@ -320,12 +337,12 @@ func (pc *PackedConn) Write(p []byte) (int, error) {
 		group := byte(pc.bitBuf << (6 - pc.bitCount))
 		pc.bitBuf = 0
 		pc.bitCount = 0
-		out = pc.appendGroup(out, group&0x3F)
+		out = appendPackedGroup(out, layout, rng, paddingThreshold, padPool, group)
 		out = append(out, pc.padMarker)
 	}
 
 	// Possibly append trailing padding
-	out = pc.maybeAddPadding(out)
+	out = maybeAppendPackedPadding(out, rng, paddingThreshold, padPool)
 
 	// Send data
 	if len(out) > 0 {
@@ -338,6 +355,10 @@ func (pc *PackedConn) Write(p []byte) (int, error) {
 
 // Flush writes any residual bits left by partial writes.
 func (pc *PackedConn) Flush() error {
+	if pc == nil || pc.Conn == nil || pc.table == nil || pc.table.layout == nil || pc.rng == nil || len(pc.padPool) == 0 {
+		return io.ErrClosedPipe
+	}
+
 	pc.writeMu.Lock()
 	defer pc.writeMu.Unlock()
 
@@ -352,7 +373,7 @@ func (pc *PackedConn) Flush() error {
 	}
 
 	// Possibly append trailing padding
-	out = pc.maybeAddPadding(out)
+	out = maybeAppendPackedPadding(out, pc.rng, pc.paddingThreshold, pc.padPool)
 
 	if len(out) > 0 {
 		pc.writeBuf = out[:0]
@@ -366,6 +387,9 @@ func (pc *PackedConn) Read(p []byte) (int, error) {
 	if len(p) == 0 {
 		return 0, nil
 	}
+	if pc == nil || pc.Conn == nil || pc.reader == nil || len(pc.rawBuf) == 0 || pc.table == nil || pc.table.layout == nil {
+		return 0, io.ErrClosedPipe
+	}
 
 	// 1. Return pending decoded data first
 	if n, ok := drainPending(p, &pc.pendingData); ok {
@@ -375,7 +399,7 @@ func (pc *PackedConn) Read(p []byte) (int, error) {
 	// 2. Keep reading until data is decoded or an error occurs
 	outN := 0
 	for {
-		nr, rErr := pc.reader.Read(pc.rawBuf)
+		nr, rErr := pc.reader.Read(pc.rawBuf[:packedReadSize(len(p)-outN, len(pc.rawBuf))])
 		if nr > 0 {
 			if pc.recording.Load() {
 				pc.recordLock.Lock()
@@ -391,7 +415,25 @@ func (pc *PackedConn) Read(p []byte) (int, error) {
 			padMarker := pc.padMarker
 			layout := pc.table.layout
 
-			for _, b := range pc.rawBuf[:nr] {
+			chunk := pc.rawBuf[:nr]
+			for i := 0; i < len(chunk); {
+				if rBits == 0 && outN+3 <= len(p) && i+3 < len(chunk) &&
+					layout.hintTable[chunk[i]] && layout.hintTable[chunk[i+1]] &&
+					layout.hintTable[chunk[i+2]] && layout.hintTable[chunk[i+3]] {
+					g1 := layout.decodeGroup[chunk[i]]
+					g2 := layout.decodeGroup[chunk[i+1]]
+					g3 := layout.decodeGroup[chunk[i+2]]
+					g4 := layout.decodeGroup[chunk[i+3]]
+					p[outN] = (g1 << 2) | (g2 >> 4)
+					p[outN+1] = (g2 << 4) | (g3 >> 2)
+					p[outN+2] = (g3 << 6) | g4
+					outN += 3
+					i += 4
+					continue
+				}
+
+				b := chunk[i]
+				i++
 				if !layout.hintTable[b] {
 					if b == padMarker {
 						rBuf = 0
@@ -447,4 +489,19 @@ func (pc *PackedConn) Read(p []byte) (int, error) {
 // getPaddingByte picks a random padding byte from the pool.
 func (pc *PackedConn) getPaddingByte() byte {
 	return pc.padPool[pc.rng.Intn(len(pc.padPool))]
+}
+
+func packedReadSize(decodedRemaining, maxRaw int) int {
+	if maxRaw <= minDecodeReadSize || decodedRemaining <= 0 {
+		return maxRaw
+	}
+	if decodedRemaining > (maxRaw-minDecodeReadSize)/2 {
+		return maxRaw
+	}
+
+	// Packed mode emits 4 wire hint bytes per 3 payload bytes, with optional
+	// padding and a protected prefix. Avoid decoding an entire 64 KiB raw buffer
+	// when the caller only needs an AEAD length/header-sized read.
+	need := decodedRemaining*2 + minDecodeReadSize
+	return need
 }

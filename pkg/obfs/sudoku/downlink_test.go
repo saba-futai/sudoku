@@ -112,6 +112,27 @@ func TestPackedDownlinkWriter_RoundTripCompatibility(t *testing.T) {
 	}
 }
 
+func TestPackedConn_SmallReadDoesNotOverDecode(t *testing.T) {
+	table := NewTable("packed-small-read", "prefer_ascii")
+
+	mock := &MockConn{}
+	writer := NewPackedConn(mock, table, 0, 0)
+	payload := bytes.Repeat([]byte("x"), 63*1024)
+	if _, err := writer.Write(payload); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	reader := NewPackedConn(&MockConn{readBuf: mock.writeBuf}, table, 0, 0)
+	header := make([]byte, 2)
+	if _, err := io.ReadFull(reader, header); err != nil {
+		t.Fatalf("small read: %v", err)
+	}
+
+	if pending := reader.pendingData.available(); pending > minDecodeReadSize {
+		t.Fatalf("small read decoded too much pending data: %d", pending)
+	}
+}
+
 func countNonHintBytes(data []byte, table *Table) int {
 	count := 0
 	for _, b := range data {

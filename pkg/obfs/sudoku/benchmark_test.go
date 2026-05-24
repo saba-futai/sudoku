@@ -93,3 +93,49 @@ func BenchmarkSudokuRead(b *testing.B) {
 		io.ReadFull(readerConn, buf)
 	}
 }
+
+func BenchmarkPackedWrite(b *testing.B) {
+	key := "packed-benchmark-key"
+	table := NewTable(key, "prefer_ascii")
+	mock := &MockConn{}
+	conn := NewPackedConn(mock, table, 10, 20)
+
+	data := make([]byte, 63*1024)
+	rand.Read(data)
+
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		mock.writeBuf = mock.writeBuf[:0]
+		if _, err := conn.Write(data); err != nil {
+			b.Fatal(err)
+		}
+	}
+}
+
+func BenchmarkPackedRead(b *testing.B) {
+	key := "packed-benchmark-key"
+	table := NewTable(key, "prefer_ascii")
+
+	mock := &MockConn{}
+	writerConn := NewPackedConn(mock, table, 10, 20)
+	data := make([]byte, 63*1024)
+	rand.Read(data)
+	if _, err := writerConn.Write(data); err != nil {
+		b.Fatal(err)
+	}
+	encodedData := append([]byte(nil), mock.writeBuf...)
+
+	b.SetBytes(int64(len(data)))
+	b.ResetTimer()
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		mock.readBuf = encodedData
+		readerConn := NewPackedConn(mock, table, 10, 20)
+		buf := make([]byte, len(data))
+		if _, err := io.ReadFull(readerConn, buf); err != nil {
+			b.Fatal(err)
+		}
+	}
+}

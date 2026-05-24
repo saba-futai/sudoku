@@ -1,8 +1,10 @@
 # 更新日志
 
-## Unreleased
+## v0.4.6（2026-05-25）
 - `sudoku/downlink`: 删除服务端下行 MTU 边界触发的 1/13 概率纯 padding 小包注入；保留常规 Sudoku padding 与 packed AEAD Record 前缀扰动，避免 TCP 粘包下无效的额外写入和带宽浪费。
 - `perf`: 优化下行热路径，RecordConn 复用读帧缓冲并原地解密，Sudoku/Packed 读取优先直接解码进调用方 buffer，同时减少无 padding 编码容量浪费并调大代理 pipe buffer 以降低大下载 record 开销。
+- `perf`: 继续优化 packed 下行接收路径，按调用方需求限制小读解码窗口，避免 AEAD 长度头读取时一次性堆积大量 pending 数据；新增 packed 4:3 解码快路径与 96KiB 解码 scratch，降低客户端下载 CPU 开销。
+- `perf`: 优化 packed 下行发送热路径，移除 group 编码中的接口随机数与多层函数调用开销，并让轻量 PRNG 复用 64bit 输出；保持 padding 概率与 wire 格式兼容，降低服务端 packed 写侧 CPU。
 
 ## v0.4.5（2026-05-22）
 - `proxy/pac`: `rule_urls` 新增 `-https://...` / `_https://...` proxy 规则源语义；命中 proxy 规则的目标会优先走代理，可用于覆盖默认直连规则中的个别域名或网段。
