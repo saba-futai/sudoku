@@ -29,7 +29,10 @@ import (
 	"github.com/SUDOKU-ASCII/sudoku/pkg/connutil"
 )
 
-const IOBufferSize = 32 * 1024
+const (
+	IOBufferSize       = 32 * 1024
+	PackedIOBufferSize = 64 * 1024
+)
 
 var perm4 = [24][4]byte{
 	{0, 1, 2, 3},
@@ -155,15 +158,15 @@ func (sc *Conn) Write(p []byte) (n int, err error) {
 }
 
 func (sc *Conn) Read(p []byte) (n int, err error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
 	if n, ok := drainPending(p, &sc.pendingData); ok {
 		return n, nil
 	}
 
+	outN := 0
 	for {
-		if sc.pendingData.available() > 0 {
-			break
-		}
-
 		nr, rErr := sc.reader.Read(sc.rawBuf)
 		if nr > 0 {
 			chunk := sc.rawBuf[:nr]
@@ -189,20 +192,23 @@ func (sc *Conn) Read(p []byte) (n int, err error) {
 					if !ok {
 						return 0, ErrInvalidSudokuMapMiss
 					}
-					sc.pendingData.appendByte(val)
+					outN = appendDecodedByte(p, outN, &sc.pendingData, val)
 					sc.hintCount = 0
 				}
 			}
 		}
 
 		if rErr != nil {
+			if outN > 0 {
+				return outN, nil
+			}
+			if n, ok := drainPending(p, &sc.pendingData); ok {
+				return n, nil
+			}
 			return 0, rErr
 		}
-		if sc.pendingData.available() > 0 {
-			break
+		if outN > 0 {
+			return outN, nil
 		}
 	}
-
-	n, _ = drainPending(p, &sc.pendingData)
-	return n, nil
 }

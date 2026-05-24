@@ -25,9 +25,13 @@ import (
 	"sync"
 )
 
+// PipeBufferSize stays just below the AEAD record plaintext ceiling, reducing
+// record count for large streams without forcing an extra tiny trailing record.
+const PipeBufferSize = 63 * 1024
+
 var pipeBufPool = sync.Pool{
 	New: func() any {
-		return make([]byte, 32*1024)
+		return make([]byte, PipeBufferSize)
 	},
 }
 

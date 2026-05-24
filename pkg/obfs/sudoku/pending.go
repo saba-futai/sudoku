@@ -65,6 +65,15 @@ func (p *pendingBuffer) appendByte(b byte) {
 	p.data = append(p.data, b)
 }
 
+func appendDecodedByte(dst []byte, n int, pending *pendingBuffer, b byte) int {
+	if n < len(dst) {
+		dst[n] = b
+		return n + 1
+	}
+	pending.appendByte(b)
+	return n
+}
+
 // drainPending copies buffered decoded bytes into dst.
 // It returns (n, true) when pending data existed, otherwise (0, false).
 func drainPending(dst []byte, pending *pendingBuffer) (int, bool) {

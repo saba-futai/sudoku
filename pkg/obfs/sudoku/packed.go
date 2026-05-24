@@ -97,8 +97,8 @@ func NewPackedConnWithRecord(c net.Conn, table *Table, pMin, pMax int, record bo
 	pc := &PackedConn{
 		Conn:             c,
 		table:            table,
-		reader:           bufio.NewReaderSize(c, IOBufferSize),
-		rawBuf:           make([]byte, IOBufferSize),
+		reader:           bufio.NewReaderSize(c, PackedIOBufferSize),
+		rawBuf:           make([]byte, PackedIOBufferSize),
 		pendingData:      newPendingBuffer(4096),
 		writeBuf:         make([]byte, 0, 4096),
 		rng:              localRng,
@@ -154,14 +154,16 @@ func (pc *PackedConn) GetBufferedAndRecorded() []byte {
 
 // maybeAddPadding inserts a padding byte with the same probability model as Conn.
 func (pc *PackedConn) maybeAddPadding(out []byte) []byte {
-	if shouldPad(pc.rng, pc.paddingThreshold) {
+	if pc.paddingThreshold != 0 && shouldPad(pc.rng, pc.paddingThreshold) {
 		out = append(out, pc.getPaddingByte())
 	}
 	return out
 }
 
 func (pc *PackedConn) appendGroup(out []byte, group byte) []byte {
-	out = pc.maybeAddPadding(out)
+	if pc.paddingThreshold != 0 && shouldPad(pc.rng, pc.paddingThreshold) {
+		out = append(out, pc.getPaddingByte())
+	}
 	return append(out, pc.table.layout.groupByte(group))
 }
 
@@ -224,8 +226,10 @@ func (pc *PackedConn) Write(p []byte) (int, error) {
 	defer pc.writeMu.Unlock()
 
 	// 1. Pre-allocate memory to avoid repeated append expansions.
-	// Estimate: original data * 1.5 (4/3 + padding margin)
 	needed := len(p)*3/2 + 32
+	if pc.paddingThreshold == 0 {
+		needed = ((len(p)+2)/3)*4 + 32
+	}
 	if cap(pc.writeBuf) < needed {
 		pc.writeBuf = make([]byte, 0, needed)
 	}
@@ -359,12 +363,17 @@ func (pc *PackedConn) Flush() error {
 
 // Read decodes hint bytes back into the original byte stream.
 func (pc *PackedConn) Read(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+
 	// 1. Return pending decoded data first
 	if n, ok := drainPending(p, &pc.pendingData); ok {
 		return n, nil
 	}
 
 	// 2. Keep reading until data is decoded or an error occurs
+	outN := 0
 	for {
 		nr, rErr := pc.reader.Read(pc.rawBuf)
 		if nr > 0 {
@@ -402,7 +411,7 @@ func (pc *PackedConn) Read(p []byte) (int, error) {
 				if rBits >= 8 {
 					rBits -= 8
 					val := byte(rBuf >> rBits)
-					pc.pendingData.appendByte(val)
+					outN = appendDecodedByte(p, outN, &pc.pendingData, val)
 					if rBits == 0 {
 						rBuf = 0
 					} else {
@@ -420,20 +429,19 @@ func (pc *PackedConn) Read(p []byte) (int, error) {
 				pc.readBitBuf = 0
 				pc.readBits = 0
 			}
-			if pc.pendingData.available() > 0 {
-				break
+			if outN > 0 {
+				return outN, nil
+			}
+			if n, ok := drainPending(p, &pc.pendingData); ok {
+				return n, nil
 			}
 			return 0, rErr
 		}
 
-		if pc.pendingData.available() > 0 {
-			break
+		if outN > 0 {
+			return outN, nil
 		}
 	}
-
-	// 3. Return decoded data — avoid underlying array leaks
-	n, _ := drainPending(p, &pc.pendingData)
-	return n, nil
 }
 
 // getPaddingByte picks a random padding byte from the pool.

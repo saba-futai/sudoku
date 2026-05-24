@@ -84,3 +84,39 @@ func TestRecordConn_FirstFrameUsesRandomizedCounters(t *testing.T) {
 		t.Fatalf("plaintext mismatch: got %q want %q", got, want)
 	}
 }
+
+func TestRecordConn_ReadSmallChunks(t *testing.T) {
+	pskSend := sha256.Sum256([]byte("record-small-send"))
+	pskRecv := sha256.Sum256([]byte("record-small-recv"))
+
+	raw := &captureConn{}
+	writer, err := NewRecordConn(raw, "chacha20-poly1305", pskSend[:], pskRecv[:])
+	if err != nil {
+		t.Fatalf("new writer: %v", err)
+	}
+
+	want := bytes.Repeat([]byte("small-read-pending-"), 4096)
+	if _, err := writer.Write(want); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	reader, err := NewRecordConn(&replayConn{reader: bytes.NewReader(raw.Bytes())}, "chacha20-poly1305", pskRecv[:], pskSend[:])
+	if err != nil {
+		t.Fatalf("new reader: %v", err)
+	}
+
+	var got bytes.Buffer
+	buf := make([]byte, 37)
+	for got.Len() < len(want) {
+		n, err := reader.Read(buf)
+		if n > 0 {
+			got.Write(buf[:n])
+		}
+		if err != nil {
+			t.Fatalf("read at %d: %v", got.Len(), err)
+		}
+	}
+	if !bytes.Equal(got.Bytes(), want) {
+		t.Fatalf("plaintext mismatch")
+	}
+}
