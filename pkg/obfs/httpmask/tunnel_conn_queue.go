@@ -46,6 +46,8 @@ type queuedConn struct {
 	remoteAddr net.Addr
 }
 
+const queuedConnPayloadQueueDepth = 64
+
 func (c *queuedConn) CloseWrite() error {
 	if c == nil || c.writeClosed == nil {
 		return nil

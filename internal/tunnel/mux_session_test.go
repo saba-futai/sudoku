@@ -88,3 +88,64 @@ func TestMuxSession_Echo(t *testing.T) {
 		t.Fatalf("server did not exit: %v", ctx.Err())
 	}
 }
+
+func TestMuxStream_EnqueueBackpressure(t *testing.T) {
+	st := newMuxStream(nil, 1)
+	payload := make([]byte, muxMaxDataPayload)
+
+	for queued := 0; queued < muxMaxQueuedBytesPerStream; queued += len(payload) {
+		st.enqueue(payload)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		st.enqueue(payload)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		t.Fatalf("enqueue completed while stream was at queued byte limit")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	buf := make([]byte, len(payload))
+	if _, err := io.ReadFull(st, buf); err != nil {
+		t.Fatalf("read: %v", err)
+	}
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatalf("enqueue did not resume after reader consumed capacity")
+	}
+}
+
+func TestMuxStream_EnqueueBackpressureUnblocksOnClose(t *testing.T) {
+	st := newMuxStream(nil, 1)
+	payload := make([]byte, muxMaxDataPayload)
+
+	for queued := 0; queued < muxMaxQueuedBytesPerStream; queued += len(payload) {
+		st.enqueue(payload)
+	}
+
+	done := make(chan struct{})
+	go func() {
+		st.enqueue(payload)
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		t.Fatalf("enqueue completed while stream was at queued byte limit")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	st.closeNoSend(io.ErrClosedPipe)
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatalf("enqueue did not unblock after stream close")
+	}
+}

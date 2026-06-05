@@ -75,12 +75,12 @@ func (w *DownlinkWriter) Write(p []byte) (int, error) {
 type sudokuDataWriter struct {
 	writer           io.Writer
 	table            *Table
-	rng              randomSource
+	rng              *sudokuRand
 	paddingThreshold uint64
 	writeBuf         []byte
 }
 
-func newSudokuDataWriter(writer io.Writer, table *Table, rng randomSource, pMin, pMax int) *sudokuDataWriter {
+func newSudokuDataWriter(writer io.Writer, table *Table, rng *sudokuRand, pMin, pMax int) *sudokuDataWriter {
 	return &sudokuDataWriter{
 		writer:           writer,
 		table:            table,
@@ -104,7 +104,7 @@ func (w *sudokuDataWriter) Write(p []byte) (int, error) {
 	return len(p), connutil.WriteFull(w.writer, w.writeBuf)
 }
 
-func encodeSudokuPayload(dst []byte, table *Table, rng randomSource, paddingThreshold uint64, p []byte) []byte {
+func encodeSudokuPayload(dst []byte, table *Table, rng *sudokuRand, paddingThreshold uint64, p []byte) []byte {
 	if len(p) == 0 {
 		return dst[:0]
 	}
@@ -120,8 +120,25 @@ func encodeSudokuPayload(dst []byte, table *Table, rng randomSource, paddingThre
 	pads := table.PaddingPool
 	padLen := len(pads)
 
+	if paddingThreshold >= probOne {
+		for _, b := range p {
+			out = append(out, pads[rng.Intn(padLen)])
+
+			puzzles := table.EncodeTable[b]
+			puzzle := puzzles[rng.Intn(len(puzzles))]
+
+			perm := perm4[rng.Intn(len(perm4))]
+			for _, idx := range perm {
+				out = append(out, pads[rng.Intn(padLen)], puzzle[idx])
+			}
+		}
+
+		out = append(out, pads[rng.Intn(padLen)])
+		return out
+	}
+
 	for _, b := range p {
-		if shouldPad(rng, paddingThreshold) {
+		if uint64(rng.Uint32()) < paddingThreshold {
 			out = append(out, pads[rng.Intn(padLen)])
 		}
 
@@ -130,20 +147,20 @@ func encodeSudokuPayload(dst []byte, table *Table, rng randomSource, paddingThre
 
 		perm := perm4[rng.Intn(len(perm4))]
 		for _, idx := range perm {
-			if shouldPad(rng, paddingThreshold) {
+			if uint64(rng.Uint32()) < paddingThreshold {
 				out = append(out, pads[rng.Intn(padLen)])
 			}
 			out = append(out, puzzle[idx])
 		}
 	}
 
-	if shouldPad(rng, paddingThreshold) {
+	if uint64(rng.Uint32()) < paddingThreshold {
 		out = append(out, pads[rng.Intn(padLen)])
 	}
 	return out
 }
 
-func encodeSudokuPayloadNoPadding(dst []byte, table *Table, rng randomSource, p []byte) []byte {
+func encodeSudokuPayloadNoPadding(dst []byte, table *Table, rng *sudokuRand, p []byte) []byte {
 	outCapacity := len(p) * 4
 	if cap(dst) < outCapacity {
 		dst = make([]byte, 0, outCapacity)

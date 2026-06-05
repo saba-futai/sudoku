@@ -80,7 +80,7 @@ type Conn struct {
 	writeMu     sync.Mutex
 	writeBuf    []byte
 
-	rng              randomSource
+	rng              *sudokuRand
 	paddingThreshold uint64
 }
 
@@ -194,23 +194,42 @@ func (sc *Conn) Read(p []byte) (n int, err error) {
 				sc.recordLock.Unlock()
 			}
 
-			layout := sc.table.layout
-			for _, b := range chunk {
+			table := sc.table
+			layout := table.layout
+			for i := 0; i < len(chunk); {
+				if sc.hintCount == 0 && outN < len(p) && i+3 < len(chunk) &&
+					layout.hintTable[chunk[i]] &&
+					layout.hintTable[chunk[i+1]] &&
+					layout.hintTable[chunk[i+2]] &&
+					layout.hintTable[chunk[i+3]] {
+					val, ok := table.DecodeMap[packHintBytes(chunk[i], chunk[i+1], chunk[i+2], chunk[i+3])]
+					if !ok {
+						return 0, ErrInvalidSudokuMapMiss
+					}
+					p[outN] = val
+					outN++
+					i += 4
+					continue
+				}
+
+				b := chunk[i]
+				i++
 				if !layout.hintTable[b] {
 					continue
 				}
 
 				sc.hintBuf[sc.hintCount] = b
 				sc.hintCount++
-				if sc.hintCount == 4 {
-					key := packHintsToKey(sc.hintBuf)
-					val, ok := sc.table.DecodeMap[key]
-					if !ok {
-						return 0, ErrInvalidSudokuMapMiss
-					}
-					outN = appendDecodedByte(p, outN, &sc.pendingData, val)
-					sc.hintCount = 0
+				if sc.hintCount != 4 {
+					continue
 				}
+
+				val, ok := table.DecodeMap[packHintBytes(sc.hintBuf[0], sc.hintBuf[1], sc.hintBuf[2], sc.hintBuf[3])]
+				if !ok {
+					return 0, ErrInvalidSudokuMapMiss
+				}
+				outN = appendDecodedByte(p, outN, &sc.pendingData, val)
+				sc.hintCount = 0
 			}
 		}
 

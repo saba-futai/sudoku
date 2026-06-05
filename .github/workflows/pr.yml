@@ -1,17 +1,115 @@
 name: pr-ci
 
 on:
-  pull_request:
+  pull_request_target:
     branches:
       - main
+    types:
+      - opened
+      - reopened
+      - synchronize
+      - ready_for_review
+  pull_request_review:
+    types:
+      - submitted
   workflow_dispatch:
 
 permissions:
   contents: read
+  pull-requests: read
 
 jobs:
+  authorize:
+    name: Require Admin Approval
+    runs-on: ubuntu-latest
+    outputs:
+      allowed: ${{ steps.check.outputs.allowed }}
+      reason: ${{ steps.check.outputs.reason }}
+      head_sha: ${{ steps.check.outputs.head_sha }}
+      head_repo: ${{ steps.check.outputs.head_repo }}
+    steps:
+      - name: Check admin approval
+        id: check
+        uses: actions/github-script@v7
+        with:
+          script: |
+            if (context.eventName === 'workflow_dispatch') {
+              core.setOutput('allowed', 'true');
+              core.setOutput('reason', 'manual workflow_dispatch');
+              core.setOutput('head_sha', context.sha);
+              core.setOutput('head_repo', `${context.repo.owner}/${context.repo.repo}`);
+              return;
+            }
+
+            const pr = context.payload.pull_request;
+            if (!pr) {
+              core.setOutput('allowed', 'false');
+              core.setOutput('reason', 'no pull_request payload');
+              return;
+            }
+            if (pr.base.ref !== 'main') {
+              core.setOutput('allowed', 'false');
+              core.setOutput('reason', `base branch is ${pr.base.ref}, not main`);
+              return;
+            }
+            if (pr.draft) {
+              core.setOutput('allowed', 'false');
+              core.setOutput('reason', 'draft PR');
+              return;
+            }
+
+            const {owner, repo} = context.repo;
+            const headSha = pr.head.sha;
+            const headRepo = pr.head.repo.full_name;
+            core.setOutput('head_sha', headSha);
+            core.setOutput('head_repo', headRepo);
+
+            async function permission(username) {
+              const res = await github.rest.repos.getCollaboratorPermissionLevel({
+                owner,
+                repo,
+                username,
+              });
+              return res.data.permission;
+            }
+
+            if (await permission(pr.user.login) === 'admin') {
+              core.setOutput('allowed', 'true');
+              core.setOutput('reason', `PR author ${pr.user.login} has admin permission`);
+              return;
+            }
+
+            const reviews = await github.paginate(github.rest.pulls.listReviews, {
+              owner,
+              repo,
+              pull_number: pr.number,
+              per_page: 100,
+            });
+
+            for (const review of reviews.reverse()) {
+              if (review.state !== 'APPROVED' || review.commit_id !== headSha) {
+                continue;
+              }
+              if (await permission(review.user.login) === 'admin') {
+                core.setOutput('allowed', 'true');
+                core.setOutput('reason', `head ${headSha} approved by admin ${review.user.login}`);
+                return;
+              }
+            }
+
+            core.setOutput('allowed', 'false');
+            core.setOutput('reason', `head ${headSha} has no admin approval`);
+
+      - name: Authorization result
+        shell: bash
+        run: |
+          echo "PR CI authorization: ${{ steps.check.outputs.allowed }}"
+          echo "Reason: ${{ steps.check.outputs.reason }}"
+
   test:
     name: Strict Tests (${{ matrix.os }})
+    needs: authorize
+    if: needs.authorize.outputs.allowed == 'true'
     runs-on: ${{ matrix.os }}
     timeout-minutes: 30
     strategy:
@@ -28,6 +126,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          repository: ${{ needs.authorize.outputs.head_repo }}
+          ref: ${{ needs.authorize.outputs.head_sha }}
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -53,3 +154,8 @@ jobs:
             FLAGS="$FLAGS -race"
           fi
           go test ./... $FLAGS
+
+      - name: Downlink benchmark summary
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: ./scripts/ci-downlink-benchmark-summary.sh

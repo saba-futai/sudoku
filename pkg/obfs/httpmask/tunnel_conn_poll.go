@@ -77,9 +77,9 @@ func dialPoll(ctx context.Context, serverAddress string, opts TunnelDialOptions)
 		headerHost: info.headerHost,
 		auth:       info.auth,
 		queuedConn: queuedConn{
-			rxc:         make(chan []byte, 128),
+			rxc:         make(chan []byte, queuedConnPayloadQueueDepth),
 			closed:      make(chan struct{}),
-			writeCh:     make(chan []byte, 256),
+			writeCh:     make(chan []byte, queuedConnPayloadQueueDepth),
 			writeClosed: make(chan struct{}),
 			localAddr:   &net.TCPAddr{},
 			remoteAddr:  &net.TCPAddr{},

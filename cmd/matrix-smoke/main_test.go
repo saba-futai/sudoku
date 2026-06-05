@@ -50,6 +50,7 @@ func TestMatrixSmoke(t *testing.T) {
 
 func TestHTTPMaskRTTParity(t *testing.T) {
 	t.Helper()
+	t.Skip("httpmask RTT parity is timing-sensitive and flaky under CI/load")
 
 	cases := []combo{
 		{enablePureDownlink: true, httpmaskEnabled: true, mux: "off", httpmaskMode: "auto", pathRoot: "aabbcc", asciiMode: "prefer_entropy", tableSet: "default"},

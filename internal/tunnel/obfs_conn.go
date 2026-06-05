@@ -24,6 +24,7 @@ import (
 	"net"
 
 	"github.com/SUDOKU-ASCII/sudoku/internal/config"
+	"github.com/SUDOKU-ASCII/sudoku/pkg/connutil"
 	"github.com/SUDOKU-ASCII/sudoku/pkg/obfs/sudoku"
 )
 
@@ -54,6 +55,20 @@ func (c *connWithObfsMeta) SudokuUplinkPacked() bool {
 		return false
 	}
 	return c.uplinkPacked
+}
+
+func (c *connWithObfsMeta) CloseWrite() error {
+	if c == nil {
+		return nil
+	}
+	return connutil.TryCloseWrite(c.Conn)
+}
+
+func (c *connWithObfsMeta) CloseRead() error {
+	if c == nil {
+		return nil
+	}
+	return connutil.TryCloseRead(c.Conn)
 }
 
 func WrapConnWithObfsMeta(conn net.Conn, uplinkMode ObfsUplinkMode) net.Conn {

@@ -53,3 +53,8 @@ jobs:
             FLAGS="$FLAGS -race"
           fi
           go test ./... $FLAGS
+
+      - name: Downlink benchmark summary
+        if: matrix.os == 'ubuntu-latest'
+        shell: bash
+        run: ./scripts/ci-downlink-benchmark-summary.sh

@@ -38,8 +38,12 @@ const (
 )
 
 const (
-	muxHeaderSize   = 1 + 4 + 4
-	muxMaxFrameSize = 256 * 1024
+	muxHeaderSize = 1 + 4 + 4
+	// muxMaxQueuedBytesPerStream bounds unread payload retained by a single logical stream.
+	// It prevents a slow reader from accumulating unbounded DATA frames while preserving
+	// net.Conn semantics by applying backpressure to the demux loop instead of dropping data.
+	muxMaxQueuedBytesPerStream = 4 * 1024 * 1024
+	muxMaxFrameSize            = 256 * 1024
 	// Larger data frames materially reduce per-frame lock/copy overhead for
 	// single-tunnel large downloads while still staying well below the hard cap.
 	muxMaxDataPayload = 128 * 1024
@@ -288,6 +292,8 @@ type muxStream struct {
 	closeErr error
 	readBuf  []byte
 	queue    [][]byte
+	// queuedBytes includes unread bytes in readBuf and queue.
+	queuedBytes int
 
 	localAddr  net.Addr
 	remoteAddr net.Addr
@@ -347,7 +353,11 @@ func (c *muxStream) Read(p []byte) (int, error) {
 	}
 	if len(c.readBuf) == 0 && len(c.queue) > 0 {
 		c.readBuf = c.queue[0]
+		c.queue[0] = nil
 		c.queue = c.queue[1:]
+		if len(c.queue) == 0 {
+			c.queue = nil
+		}
 	}
 	if len(c.readBuf) == 0 && c.closed {
 		return 0, c.closedErrLocked()
@@ -355,6 +365,14 @@ func (c *muxStream) Read(p []byte) (int, error) {
 
 	n := copy(p, c.readBuf)
 	c.readBuf = c.readBuf[n:]
+	if len(c.readBuf) == 0 {
+		c.readBuf = nil
+	}
+	c.queuedBytes -= n
+	if c.queuedBytes < 0 {
+		c.queuedBytes = 0
+	}
+	c.cond.Broadcast()
 	return n, nil
 }
 
@@ -421,15 +439,19 @@ func (c *muxStream) SetWriteDeadline(time.Time) error { return nil }
 
 func (c *muxStream) enqueue(payload []byte) {
 	c.mu.Lock()
+	for !c.closed && c.queuedBytes+len(payload) > muxMaxQueuedBytesPerStream {
+		c.cond.Wait()
+	}
 	if c.closed {
 		c.mu.Unlock()
 		return
 	}
+	c.queuedBytes += len(payload)
 	if len(c.readBuf) == 0 && len(c.queue) == 0 {
 		c.readBuf = payload
 	} else {
 		c.queue = append(c.queue, payload)
 	}
-	c.cond.Signal()
+	c.cond.Broadcast()
 	c.mu.Unlock()
 }
